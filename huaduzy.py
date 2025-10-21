@@ -1,144 +1,119 @@
 # -*- coding: utf-8 -*-
-# 目标：解决网站无法访问和视频解码问题，采用更简洁可靠的逻辑。
+# 目标：解决 TVBox 环境下的兼容性问题，采用最保守的初始化策略。
 
 import json
 import re
 import sys
-import time
-from base64 import b64encode, b64decode
+from base64 import b64decode
 from urllib.parse import unquote 
 import requests
 from pyquery import PyQuery as pq
 
 sys.path.append('..')
-from base.spider import Spider # 假设这是您的宿主环境需要的基类
+from base.spider import Spider 
 
 
 class Spider(Spider):
 
+    # --- 核心配置 ---
+    FIXED_HOST = "https://hd8.huaduzy.vip" 
+    COMMON_USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
+    
+    # 保持 self.session 和 self.headers 的初始化，但只在 TVBox 期待时使用
+    session = None
+    headers = {}
+    proxies = {}
+    pheader = {}
+
+
     def init(self, extend=""):
+        """ TVBox 兼容性优先：只设置通用参数，不触碰 session 状态。 """
+        
+        # 1. 初始化头部
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
-            'Referer': 'https://a.hdys.top/', # 初始Referer用于获取域名配置
+            'User-Agent': self.COMMON_USER_AGENT,
+            'Referer': self.FIXED_HOST + '/', 
             'Accept-Language': 'zh-CN,zh;q=0.9',
+            'Accept': '*/*',
         }
+        
+        # 2. 处理代理配置
         try:
             self.proxies = json.loads(extend)
         except:
             self.proxies = {}
         
-        # 1. 核心步骤：获取当前可用的主机名
-        self.host = self.gethost()
+        # 3. 播放器专用的 header
+        self.pheader = self.headers.copy()
+        self.pheader.update({
+            'Referer': self.FIXED_HOST,
+            'Origin': self.FIXED_HOST
+        })
         
-        # 2. 更新 Referer 为最终主机名
-        self.headers['Referer'] = self.host + '/' 
-        
-        # 3. 创建一个通用的 requests Session
-        self.session = requests.Session()
-        self.session.headers.update(self.headers)
-        self.session.proxies.update(self.proxies)
+        # 4. **关键：不在这里创建 requests.Session()**，避免覆盖或冲突
+        # 如果 TVBox 在基类中创建了 self.session，我们不应该在这里重新创建它。
+        # 如果它没有创建，我们将在 getpq 中使用原始 requests 库。
+
 
     def getName(self):
-        return "花都影视（修正版）"
+        return "花都影视（TVBox 兼容）"
 
-    # --- 核心辅助函数 ---
+    # --- 辅助函数：使用原始 requests ---
 
-    def gethost(self):
-        """ 简化并稳定 gethost 逻辑：只提取域名列表，返回第一个。 """
-        config_url = 'https://a.hdys.top/assets/js/config.js'
-        
-        # 复制 headers，确保 Referer 正确
-        host_headers = self.headers.copy()
-        host_headers['Referer'] = 'https://a.hdys.top/' 
+    def getpq(self, url, method='GET', data=None):
+        """ 使用原始 requests.get/post 发送请求 """
+        # 使用独立的 headers 副本，确保没有副作用
+        request_headers = self.headers.copy()
         
         try:
-            response = requests.get(config_url, headers=host_headers, proxies=self.proxies, timeout=5)
+            # 强制使用 requests.get，绕开任何可能被污染的 self.session
+            if method == 'GET':
+                response = requests.get(
+                    url, 
+                    headers=request_headers, 
+                    proxies=self.proxies, 
+                    timeout=15, 
+                    verify=False, # **TVBox兼容：可能需要禁用SSL验证**
+                    allow_redirects=True
+                )
+            else:
+                response = requests.post(
+                    url, 
+                    headers=request_headers, 
+                    proxies=self.proxies, 
+                    data=data, 
+                    timeout=15, 
+                    verify=False, # **TVBox兼容：可能需要禁用SSL验证**
+                    allow_redirects=True
+                )
+                
             response.raise_for_status() 
             
-            # 从 JS 代码中提取域名列表
-            urls = re.findall(r'"(https?://[^"]*?)"', response.text)
+            # 安全解析内容
+            encoding = response.apparent_encoding if response.apparent_encoding != 'ascii' else 'utf-8'
+            return pq(response.content.decode(encoding, errors='ignore'))
             
-            # 返回第一个检测到的有效域名作为主域名
-            if urls:
-                # 确保返回的域名不带末尾斜杠
-                return urls[0].rstrip('/')
-            
-        except Exception as e:
-            print(f"获取主机配置失败，使用默认：{str(e)}")
-        
-        # 如果获取失败，返回一个备用域名（假设是原始代码中的）
-        return "https://huaduys.com" 
-
-    def getpq(self, response):
-        """ 安全地将响应转换为 PyQuery 对象 """
-        try:
-            return pq(response.text)
-        except:
-            return pq(response.content.decode('utf-8', errors='ignore'))
+        except requests.exceptions.RequestException as e:
+            print(f"请求 {url} 失败: {str(e)}")
+            return pq('<html></html>')
 
     def decode_url(self, encoded_text):
         """ 增强的解码器：Base64 解码，然后 URL 解码 """
         try:
-            # 1. Base64 解码
             decoded_b64 = b64decode(encoded_text.encode('utf-8')).decode('utf-8')
-            
-            # 2. 尝试 URL 百分号解码
             final_url = unquote(decoded_b64)
             return final_url
-        except Exception as e:
-            # 如果 Base64 或 URL 解码失败，则返回原始编码文本，让外部尝试解析
+        except Exception:
             return encoded_text
 
-
-    # --- 播放函数 (核心修复) ---
-
-    def playerContent(self, flag, id, vipFlags):
-        """ 视频播放页解析，专注于解码获取到的 URL """
-        video_url = f"{self.host}{id}"
-        
-        try:
-            response = self.session.get(video_url, timeout=10)
-            data = self.getpq(response)
-            
-            # 1. 提取 player_data 变量的 JSON 字符串
-            script_text = data('.stui-player.col-pd script').eq(0).text()
-            match = re.search(r'player_data\s*=\s*({.*?})\s*;', script_text, re.DOTALL)
-            
-            if not match:
-                print("未找到 player_data 变量")
-                return {'parse': 1, 'url': video_url, 'header': self.headers}
-
-            jsdata = json.loads(match.group(1))
-            encoded_url = jsdata.get('url')
-            
-            if not encoded_url:
-                print("player_data 中缺少 'url' 字段")
-                return {'parse': 1, 'url': video_url, 'header': self.headers}
-
-            # 2. 核心：使用增强解码器
-            final_url = self.decode_url(encoded_url)
-            
-            # 3. 检查是否为代理播放
-            if '.m3u8' in final_url:
-                # 注意：由于我不知道您的代理函数 localProxy 是如何实现的，
-                # 这里假设您会使用宿主App提供的代理功能
-                return {'parse': 0, 'url': final_url, 'header': self.headers, 'proxy_type': 'm3u8'}
-            
-            return {'parse': 0, 'url': final_url, 'header': self.headers}
-
-        except Exception as e:
-            print(f"播放链接解析失败: {str(e)}")
-            # 播放失败时，返回 p=1 (让宿主App尝试使用外部解析器)
-            return {'parse': 1, 'url': video_url, 'header': self.headers}
-
-
-    # --- 首页/分类/详情 (沿用标准结构) ---
+    # --- 功能函数（保持简洁，使用 getpq） ---
     
     def homeContent(self, filter):
-        # 您的原始 homeContent 逻辑，确保使用 self.session
-        response = self.session.get(self.host, timeout=10)
-        data = self.getpq(response)
+        data = self.getpq(self.FIXED_HOST)
         
+        if not data('body'): 
+            return {'class': [], 'list': []}
+
         cdata = data('.stui-header__menu.type-slide li')
         ldata = data('.stui-vodlist.clearfix li')
         
@@ -151,15 +126,11 @@ class Spider(Spider):
                     'type_id': re.search(r'\d+', i).group(0)
                 })
         
-        # 假设 self.getlist 存在于您的基类或其它地方，这里简化
-        list_items = self._parse_vod_list(ldata) 
-        
-        return {'class': classes, 'list': list_items}
+        return {'class': classes, 'list': self._parse_vod_list(ldata)}
 
     def categoryContent(self, tid, pg, filter, extend):
-        url = f"{self.host}/vodshow/{tid}--------{pg}---.html"
-        response = self.session.get(url, timeout=10)
-        data = self.getpq(response)
+        url = f"{self.FIXED_HOST}/vodshow/{tid}--------{pg}---.html"
+        data = self.getpq(url)
         
         list_items = self._parse_vod_list(data('.stui-vodlist.clearfix li'))
 
@@ -172,9 +143,8 @@ class Spider(Spider):
         }
 
     def detailContent(self, ids):
-        url = f"{self.host}{ids[0]}"
-        response = self.session.get(url, timeout=10)
-        data = self.getpq(response)
+        url = f"{self.FIXED_HOST}{ids[0]}"
+        data = self.getpq(url)
         
         vod_name = data('.stui-content__detail .title').text()
         vod_pic = data('.stui-content__thumb a img').attr('data-original')
@@ -182,12 +152,9 @@ class Spider(Spider):
         vod_play_from = []
         vod_play_url = []
 
-        # 遍历所有线路和剧集
         playlist_pannels = data('.stui-pannel-box.b.playlist .stui-pannel_bd')
         for i, pannel in enumerate(playlist_pannels.items()):
-            # 找到线路名称（通常在播放列表上方的 head 中，这里简化为默认线路）
             line_name = f"线路{i+1}"
-            
             episodes = []
             for item in pannel.find('li a').items():
                 ep_name = item.text()
@@ -202,18 +169,44 @@ class Spider(Spider):
             'vod_id': ids[0],
             'vod_name': vod_name,
             'vod_pic': vod_pic,
-            'vod_director': '',
-            'vod_actor': '',
+            'vod_director': data('.detail-row:nth-child(2) .detail-content:nth-child(2)').text().strip(),
+            'vod_actor': data('.detail-row:nth-child(3) .detail-content:nth-child(2)').text().strip(),
             'vod_content': data('.stui-content__detail .detail-row:last-child').text().strip(),
             'vod_play_from': '+++'.join(vod_play_from),
             'vod_play_url': '+++'.join(vod_play_url)
         }
         return {'list': [vod]}
 
+    def playerContent(self, flag, id, vipFlags):
+        video_url = f"{self.FIXED_HOST}{id}"
+        
+        try:
+            data = self.getpq(video_url)
+            
+            script_text = data('.stui-player.col-pd script').eq(0).text()
+            match = re.search(r'player_data\s*=\s*({.*?})\s*;', script_text, re.DOTALL)
+            
+            if not match:
+                return {'parse': 1, 'url': video_url, 'header': self.pheader}
 
-    # --- 内部辅助函数（模仿您的结构） ---
+            jsdata = json.loads(match.group(1))
+            encoded_url = jsdata.get('url')
+            
+            if not encoded_url:
+                return {'parse': 1, 'url': video_url, 'header': self.pheader}
+
+            final_url = self.decode_url(encoded_url)
+            
+            return {'parse': 0, 'url': final_url, 'header': self.pheader}
+
+        except Exception as e:
+            print(f"播放链接解析失败: {str(e)}")
+            return {'parse': 1, 'url': video_url, 'header': self.pheader}
+
+
+    # --- 内部辅助函数（保持不变） ---
+    
     def _parse_vod_list(self, data):
-        """ 解析视频列表项 """
         videos=[]
         for i in data.items():
             videos.append({
@@ -224,3 +217,28 @@ class Spider(Spider):
                 'vod_remarks': i('.pic-tag-b').text()
             })
         return videos
+
+    # --- 其他兼容函数（保持不变） ---
+
+    def searchContent(self, key, quick, pg="1"):
+        url = f"{self.FIXED_HOST}/vodsearch/{key}----------{pg}---.html"
+        data = self.getpq(url)
+        return {'list': self._parse_vod_list(data('.stui-vodlist.clearfix li')), 'page': pg}
+
+    def homeVideoContent(self):
+        return {'list':''}
+
+    def liveContent(self, url):
+        pass
+
+    def localProxy(self, param):
+        return [500, "text/plain", "Local proxy not implemented"]
+
+    def isVideoFormat(self, url):
+        pass
+
+    def manualVideoCheck(self):
+        pass
+
+    def destroy(self):
+        pass
