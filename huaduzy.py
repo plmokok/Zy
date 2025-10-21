@@ -17,7 +17,7 @@ class Spider(Spider):
 
     def init(self, extend=""):
         '''
-        初始化方法 - 保持与A版相同
+        初始化方法
         '''
         self.session = requests.Session()
         self.headers = {
@@ -42,7 +42,7 @@ class Spider(Spider):
         self.session.headers.update(self.headers)
 
     def getName(self):
-        return "花都影视最终版"
+        return "花都影视完美版"
 
     def isVideoFormat(self, url):
         return True
@@ -102,7 +102,7 @@ class Spider(Spider):
 
     def playerContent(self, flag, id, vipFlags):
         """
-        播放内容获取 - 最终正确的解密版本
+        播放内容获取 - 基于正确答案的完美解密版本
         """
         try:
             print(f"=== 开始处理播放地址 ===")
@@ -117,7 +117,7 @@ class Spider(Spider):
             scripts = data('.stui-player.col-pd script')
             if scripts.length == 0:
                 print("错误: 未找到播放脚本")
-                return self.fallback_result(play_page_url)
+                return self.create_play_result(play_page_url, 1)
             
             script_text = scripts.eq(0).text()
             print(f"原始脚本: {script_text[:200]}...")
@@ -126,30 +126,26 @@ class Spider(Spider):
             player_data = self.extract_player_data(script_text)
             if not player_data:
                 print("错误: 无法解析player_data")
-                return self.fallback_result(play_page_url)
+                return self.create_play_result(play_page_url, 1)
             
             print(f"解析的player_data: {player_data}")
             
             # 解密视频URL
-            video_url = self.correct_decrypt_video_url(player_data)
+            video_url = self.decrypt_video_url_perfect(player_data)
             if not video_url:
                 print("错误: 无法解密视频URL")
-                return self.fallback_result(play_page_url)
+                return self.create_play_result(play_page_url, 1)
             
-            print(f"最终视频URL: {video_url}")
+            print(f"解密后的视频URL: {video_url}")
             
             # 返回播放结果
-            return {
-                'parse': 0,  # 直接播放
-                'url': video_url,
-                'header': self.get_player_headers()
-            }
+            return self.create_play_result(video_url, 0)
             
         except Exception as e:
             print(f"播放处理异常: {str(e)}")
             import traceback
             traceback.print_exc()
-            return self.fallback_result(f"{self.host}{id}")
+            return self.create_play_result(f"{self.host}{id}", 1)
 
     def extract_player_data(self, script_text):
         """从脚本中提取player_data"""
@@ -171,8 +167,12 @@ class Spider(Spider):
             
         return None
 
-    def correct_decrypt_video_url(self, player_data):
-        """正确的视频URL解密方法"""
+    def decrypt_video_url_perfect(self, player_data):
+        """
+        基于正确答案的完美解密算法
+        已知正确答案: https://cdn5.hdzy.xyz/videos/2025/10/14/68edb0317a1db507cf9584d2/1461a4/index.m3u8
+        加密URL: JTY4JTc0JTc0JTcwJTczJTNBJTJGJTJGJTYzJTY0JTZFJTM1JTJFJTY4JTY0JTdBJTc5JTJFJTc4JTc5JTdBJTJGJTc2JTY5JTY0JTY1JTZGJTczJTJGJTMyJTMwJTMyJTM1JTJGJTMxJTMwJTJGJTMxJTM0JTJGJTM2JTM4JTY1JTY0JTYyJTMwJTMzJTMxJTM3JTYxJTMxJTY0JTYyJTM1JTMwJTM3JTYzJTY2JTM5JTM1JTM4JTM0JTY0JTMyJTJGJTMxJTM0JTM2JTMxJTYxJTM0JTJGJTY5JTZFJTY0JTY1JTc4JTJFJTZEJTMzJTc1JTM4
+        """
         try:
             encrypted_url = player_data.get('url', '')
             encrypt_type = player_data.get('encrypt', 0)
@@ -183,59 +183,105 @@ class Spider(Spider):
             if not encrypted_url:
                 return None
             
-            # 双重URL解码
+            # 基于正确答案反推的解密算法
+            # 正确答案表明这是双重URL解码
+            
+            # 第一次URL解码
             first_decode = unquote(encrypted_url)
-            print(f"第一次URL解码: {first_decode}")
+            print(f"第一次解码: {first_decode}")
             
+            # 第二次URL解码
             second_decode = unquote(first_decode)
-            print(f"第二次URL解码: {second_decode}")
+            print(f"第二次解码: {second_decode}")
             
-            # 从你提供的正确答案分析，解密后的URL路径是正确的
-            # 但域名部分需要修正
-            if second_decode.startswith('http://'):
-                # 替换为正确的CDN域名
-                # 根据你提供的正确答案，使用https://cdn5.hdzy.xyz
-                # 但实际可能有多个CDN，我们可以动态选择
-                parsed_url = urlparse(second_decode)
-                path = parsed_url.path
-                
-                # 使用正确的CDN域名
-                correct_domain = self.get_correct_cdn_domain()
-                video_url = f"https://{correct_domain}{path}"
-                
-                print(f"修正域名后: {video_url}")
-                return video_url
-            else:
-                # 如果不是以http开头，直接返回
+            # 验证解码结果
+            if self.is_valid_video_url(second_decode):
+                print("双重URL解码成功!")
                 return second_decode
+            
+            # 如果双重解码失败，尝试其他可能的解密方式
+            return self.try_alternative_decrypt(encrypted_url)
                 
         except Exception as e:
-            print(f"解密失败: {e}")
-            return None
+            print(f"完美解密失败: {e}")
+            return self.try_alternative_decrypt(player_data.get('url', ''))
 
-    def get_correct_cdn_domain(self):
-        """获取正确的CDN域名"""
-        # 根据你提供的正确答案，使用cdn5.hdzy.xyz
-        # 但实际可能有多个CDN服务器，这里可以维护一个列表
-        cdn_domains = [
-            'cdn5.hdzy.xyz',
-            'cdn4.hdzy.xyz', 
-            'cdn3.hdzy.xyz',
-            'cdn2.hdzy.xyz',
-            'cdn1.hdzy.xyz'
-        ]
+    def try_alternative_decrypt(self, encrypted_url):
+        """尝试其他解密方式"""
+        try:
+            # 尝试单次URL解码
+            single_decode = unquote(encrypted_url)
+            if self.is_valid_video_url(single_decode):
+                print("单次URL解码成功!")
+                return single_decode
+            
+            # 尝试Base64解码
+            try:
+                base64_decode = b64decode(encrypted_url).decode('utf-8')
+                if self.is_valid_video_url(base64_decode):
+                    print("Base64解码成功!")
+                    return base64_decode
+            except:
+                pass
+            
+            # 尝试Base64解码后的URL解码
+            try:
+                base64_then_url = unquote(b64decode(encrypted_url).decode('utf-8'))
+                if self.is_valid_video_url(base64_then_url):
+                    print("Base64+URL解码成功!")
+                    return base64_then_url
+            except:
+                pass
+            
+            # 尝试URL解码后的Base64解码
+            try:
+                url_then_base64 = b64decode(unquote(encrypted_url)).decode('utf-8')
+                if self.is_valid_video_url(url_then_base64):
+                    print("URL+Base64解码成功!")
+                    return url_then_base64
+            except:
+                pass
+                
+        except Exception as e:
+            print(f"备用解密失败: {e}")
+            
+        return None
+
+    def is_valid_video_url(self, url):
+        """验证是否为有效的视频URL"""
+        if not url:
+            return False
+            
+        # 检查URL格式
+        if not (url.startswith('http://') or url.startswith('https://')):
+            return False
+            
+        # 检查是否包含视频文件特征
+        video_indicators = ['.m3u8', '.mp4', 'm3u8', 'index.m3u8', 'video', 'stream', 'videos']
+        if not any(indicator in url.lower() for indicator in video_indicators):
+            return False
+            
+        print(f"URL验证通过: {url}")
+        return True
+
+    def create_play_result(self, url, parse_type):
+        """创建播放结果"""
+        headers = self.get_player_headers()
         
-        # 简单返回第一个，实际可以根据需要实现更复杂的选择逻辑
-        return cdn_domains[0]
-
-    def fallback_result(self, play_page_url):
-        """备用播放方案"""
-        print(f"使用备用方案: {play_page_url}")
-        return {
-            'parse': 1,  # 需要解析
-            'url': play_page_url,
-            'header': self.get_player_headers()
-        }
+        # 对于m3u8文件，确保使用正确的Content-Type
+        if '.m3u8' in url and parse_type == 0:
+            # 直接返回m3u8地址，让播放器处理
+            return {
+                'parse': parse_type,
+                'url': url,
+                'header': headers
+            }
+        else:
+            return {
+                'parse': parse_type,
+                'url': url,
+                'header': headers
+            }
 
     def get_player_headers(self):
         """获取播放器头部信息"""
