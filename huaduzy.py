@@ -6,7 +6,7 @@ import sys
 import threading
 import time
 from base64 import b64encode, b64decode
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
 import requests
 from pyquery import PyQuery as pq
 sys.path.append('..')
@@ -112,11 +112,21 @@ class Spider(Spider):
         return {'list':self.getlist(data('.stui-vodlist.clearfix li')),'page':pg}
 
     def playerContent(self, flag, id, vipFlags):
+        """
+        播放内容获取 - 最小修改版本
+        只修复播放问题，其他完全保持A版
+        """
         try:
             data=self.getpq(self.session.get(f"{self.hsot}{id}"))
             jstr=data('.stui-player.col-pd script').eq(0).text()
             jsdata=json.loads(jstr.split("=", maxsplit=1)[-1])
-            p,url=0,jsdata['url']
+            
+            # 关键修改：对URL进行双重解码
+            encrypted_url = jsdata['url']
+            # 双重URL解码
+            video_url = unquote(unquote(encrypted_url))
+            
+            p,url=0,video_url
             if '.m3u8' in url:url=self.proxy(url,'m3u8')
         except Exception as e:
             print(f"{str(e)}")
@@ -221,6 +231,10 @@ class Spider(Spider):
     def proxy(self, data, type='img'):
         if data and len(self.proxies):return f"{self.getProxyUrl()}&url={self.e64(data)}&type={type}"
         else:return data
+
+    def getProxyUrl(self):
+        """添加缺失的代理URL方法"""
+        return "http://127.0.0.1:9978/proxy?do=py"
 
     def e64(self, text):
         try:
