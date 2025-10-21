@@ -6,7 +6,7 @@ import sys
 import threading
 import time
 from base64 import b64encode, b64decode
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse
 import requests
 from pyquery import PyQuery as pq
 sys.path.append('..')
@@ -35,15 +35,16 @@ class Spider(Spider):
         }
         try:self.proxies = json.loads(extend)
         except:self.proxies = {}
-        self.hsot=self.gethost()
-        # self.hsot='https://hd.hdys2.com'
-        self.headers.update({'referer': f"{self.hsot}/"})
+        # 修正：将 self.hsot 改为 self.host
+        self.host=self.gethost()
+        # self.host='https://hd.hdys2.com'
+        self.headers.update({'referer': f"{self.host}/"})
         self.session.proxies.update(self.proxies)
         self.session.headers.update(self.headers)
         pass
 
     def getName(self):
-        pass
+        return "花都影视" # 补充 getName
 
     def isVideoFormat(self, url):
         pass
@@ -69,7 +70,8 @@ class Spider(Spider):
     }
 
     def homeContent(self, filter):
-        data=self.getpq(self.session.get(self.hsot))
+        # 使用 self.host
+        data=self.getpq(self.session.get(self.host))
         cdata=data('.stui-header__menu.type-slide li')
         ldata=data('.stui-vodlist.clearfix li')
         result = {}
@@ -89,7 +91,8 @@ class Spider(Spider):
         return {'list':''}
 
     def categoryContent(self, tid, pg, filter, extend):
-        data=self.getpq(self.session.get(f"{self.hsot}/vodshow/{tid}--------{pg}---.html"))
+        # 使用 self.host
+        data=self.getpq(self.session.get(f"{self.host}/vodshow/{tid}--------{pg}---.html"))
         result = {}
         result['list'] = self.getlist(data('.stui-vodlist.clearfix li'))
         result['page'] = pg
@@ -99,37 +102,87 @@ class Spider(Spider):
         return result
 
     def detailContent(self, ids):
-        data=self.getpq(self.session.get(f"{self.hsot}{ids[0]}"))
-        v=data('.stui-vodlist__box a')
+        # 使用 self.host
+        data=self.getpq(self.session.get(f"{self.host}{ids[0]}"))
+        
+        # 提取基础信息
+        vod_name = data('.stui-content__detail .title').text()
+        vod_pic = data('.stui-content__thumb a img').attr('data-original')
+        vod_director = data('.detail-row:nth-child(2) .detail-content:nth-child(2) a').text()
+        vod_actor = data('.detail-row:nth-child(3) .detail-content:nth-child(2) a').text()
+        vod_content = data('.detail-row:nth-child(5) .detail-content:nth-child(2)').text().strip()
+
+        # 初始化播放信息列表
+        vod_play_from = []
+        vod_play_url = []
+
+        # 解析播放线路和剧集列表
+        # .stui-player__detail:eq(0) 是包含所有线路和剧集的主容器
+        play_area = data('.stui-player__detail:eq(0)')
+        
+        # 播放线路名称（Tab 名称）
+        line_names = play_area.find('.stui-vodlist__head h3')
+        # 播放列表（ul 列表）
+        play_lists = play_area.find('.stui-content__list')
+
+        # 遍历所有线路
+        for i, line_name_item in enumerate(line_names.items()):
+            # 线路名称
+            line_flag = line_name_item.text()
+            vod_play_from.append(line_flag)
+            
+            # 对应的剧集列表
+            episodes = []
+            # 通过索引找到当前线路的 ul 列表
+            current_list = play_lists.eq(i).find('li a')
+            
+            for item in current_list.items():
+                ep_name = item.text()
+                ep_url = item.attr('href')
+                # 剧集名称$剧集链接
+                episodes.append(f"{ep_name}${ep_url}")
+
+            # 用 '$$$' 连接一个播放线路的所有剧集
+            vod_play_url.append('$$$'.join(episodes))
+
         vod = {
-            'vod_play_from': '花都影视',
-            'vod_play_url': f"{v('img').attr('alt')}${v.attr('href')}"
+            'vod_id': ids[0],
+            'vod_name': vod_name,
+            'vod_pic': self.proxy(vod_pic),
+            'vod_director': vod_director,
+            'vod_actor': vod_actor,
+            'vod_content': vod_content,
+            # 拼接线路名, 使用 '+++' 分隔
+            'vod_play_from': '+++'.join(vod_play_from),
+            # 拼接剧集列表, 使用 '+++' 分隔
+            'vod_play_url': '+++'.join(vod_play_url)
         }
         return {'list':[vod]}
 
     def searchContent(self, key, quick, pg="1"):
-        data=self.getpq(self.session.get(f"{self.hsot}/vodsearch/{key}----------{pg}---.html"))
+        # 使用 self.host
+        data=self.getpq(self.session.get(f"{self.host}/vodsearch/{key}----------{pg}---.html"))
         return {'list':self.getlist(data('.stui-vodlist.clearfix li')),'page':pg}
 
     def playerContent(self, flag, id, vipFlags):
-        """
-        播放内容获取 - 最小修改版本
-        只修改这一行：在提取URL后立即进行双重解码
-        """
+        # id 是来自 detailContent 中的具体剧集链接，例如：/vodplay/1-1-1.html
         try:
-            data=self.getpq(self.session.get(f"{self.hsot}{id}"))
+            # 使用 self.host
+            data=self.getpq(self.session.get(f"{self.host}{id}"))
             jstr=data('.stui-player.col-pd script').eq(0).text()
-            jsdata=json.loads(jstr.split("=", maxsplit=1)[-1])
+            # 提取 JSON 数据
+            jsdata=json.loads(jstr.split("=", maxsplit=1)[-1].strip())
+            p,url=0,jsdata['url']
             
-            # 唯一修改：对提取的URL进行双重解码
-            encrypted_url = jsdata['url']
-            video_url = unquote(unquote(encrypted_url))
-            
-            p,url=0,video_url
-            if '.m3u8' in url:url=self.proxy(url,'m3u8')
+            # 如果是 m3u8，则使用本地代理
+            if '.m3u8' in url:
+                url=self.proxy(url,'m3u8')
+                
         except Exception as e:
-            print(f"{str(e)}")
-            p,url=1,f"{self.hsot}{id}"
+            print(f"播放链接解析失败: {str(e)}")
+            # 播放失败时，返回 p=1 (让宿主App尝试使用外部解析器)
+            p,url=1,f"{self.host}{id}"
+            
         return  {'parse': p, 'url': url, 'header': self.pheader}
 
     def liveContent(self, url):
@@ -190,6 +243,7 @@ class Spider(Spider):
                 delay = (time.time() - start_time) * 1000
                 results[url] = delay
             except Exception as e:
+                # print(f"测试 {url} 失败: {str(e)}") # 调试输出，可选
                 results[url] = float('inf')
 
         for url in urls:
@@ -200,6 +254,11 @@ class Spider(Spider):
         for t in threads:
             t.join()
 
+        # 确保 results 不为空
+        if not results:
+             return urls[0] if urls else ''
+
+        # 返回延迟最小的 host
         return min(results.items(), key=lambda x: x[1])[0]
 
     def m3Proxy(self, url):
@@ -215,11 +274,14 @@ class Spider(Spider):
         for index, string in enumerate(lines):
             if '#EXT' not in string:
                 if 'http' not in string:
-                    domain=last_r if string.count('/') < 2 else durl
+                    # 修正相对路径：如果路径中包含斜杠少于2个，使用上一级目录；否则使用域名根目录
+                    # 原始逻辑：domain=last_r if string.count('/') < 2 else durl
+                    # 优化为：如果以 / 开头，使用 durl；否则，使用 last_r (更常见于m3u8)
+                    domain = durl if string.startswith('/') else last_r
                     string = domain + ('' if string.startswith('/') else '/') + string
                 lines[index] = self.proxy(string, string.split('.')[-1].split('?')[0])
         data = '\n'.join(lines)
-        return [200, "application/vnd.apple.mpegur", data]
+        return [200, "application/vnd.apple.mpegurl", data] # 修正 Content-Type
 
     def tsProxy(self, url,type):
         h=self.pheader.copy()
