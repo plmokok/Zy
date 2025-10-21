@@ -18,7 +18,7 @@ class Spider(Spider):
     def init(self, extend=""):
         '''
         如果一直访问不了，手动访问导航页:https://a.hdys.top，替换：
-        self.host = 'https://xxx.xxx.xxx'
+        self.hsot = 'https://xxx.xxx.xxx'
         '''
         self.session = requests.Session()
         self.headers = {
@@ -35,10 +35,10 @@ class Spider(Spider):
         }
         try:self.proxies = json.loads(extend)
         except:self.proxies = {}
-        # 修正：将 self.hsot 改为 self.host
-        self.host=self.gethost()
-        # self.host='https://hd.hdys2.com'
-        self.headers.update({'referer': f"{self.host}/"})
+        # 保持作者的命名 self.hsot
+        self.hsot=self.gethost()
+        # self.hsot='https://hd.hdys2.com'
+        self.headers.update({'referer': f"{self.hsot}/"})
         self.session.proxies.update(self.proxies)
         self.session.headers.update(self.headers)
         pass
@@ -70,8 +70,7 @@ class Spider(Spider):
     }
 
     def homeContent(self, filter):
-        # 使用 self.host
-        data=self.getpq(self.session.get(self.host))
+        data=self.getpq(self.session.get(self.hsot))
         cdata=data('.stui-header__menu.type-slide li')
         ldata=data('.stui-vodlist.clearfix li')
         result = {}
@@ -91,8 +90,7 @@ class Spider(Spider):
         return {'list':''}
 
     def categoryContent(self, tid, pg, filter, extend):
-        # 使用 self.host
-        data=self.getpq(self.session.get(f"{self.host}/vodshow/{tid}--------{pg}---.html"))
+        data=self.getpq(self.session.get(f"{self.hsot}/vodshow/{tid}--------{pg}---.html"))
         result = {}
         result['list'] = self.getlist(data('.stui-vodlist.clearfix li'))
         result['page'] = pg
@@ -102,8 +100,8 @@ class Spider(Spider):
         return result
 
     def detailContent(self, ids):
-        # 使用 self.host
-        data=self.getpq(self.session.get(f"{self.host}{ids[0]}"))
+        # 修正：获取所有播放线路和剧集信息
+        data=self.getpq(self.session.get(f"{self.hsot}{ids[0]}"))
         
         # 提取基础信息
         vod_name = data('.stui-content__detail .title').text()
@@ -160,15 +158,13 @@ class Spider(Spider):
         return {'list':[vod]}
 
     def searchContent(self, key, quick, pg="1"):
-        # 使用 self.host
-        data=self.getpq(self.session.get(f"{self.host}/vodsearch/{key}----------{pg}---.html"))
+        data=self.getpq(self.session.get(f"{self.hsot}/vodsearch/{key}----------{pg}---.html"))
         return {'list':self.getlist(data('.stui-vodlist.clearfix li')),'page':pg}
 
     def playerContent(self, flag, id, vipFlags):
-        # id 是来自 detailContent 中的具体剧集链接，例如：/vodplay/1-1-1.html
+        # id 是 detailContent 传递来的具体剧集链接，例如：/vodplay/1-1-1.html
         try:
-            # 使用 self.host
-            data=self.getpq(self.session.get(f"{self.host}{id}"))
+            data=self.getpq(self.session.get(f"{self.hsot}{id}"))
             jstr=data('.stui-player.col-pd script').eq(0).text()
             # 提取 JSON 数据
             jsdata=json.loads(jstr.split("=", maxsplit=1)[-1].strip())
@@ -181,7 +177,7 @@ class Spider(Spider):
         except Exception as e:
             print(f"播放链接解析失败: {str(e)}")
             # 播放失败时，返回 p=1 (让宿主App尝试使用外部解析器)
-            p,url=1,f"{self.host}{id}"
+            p,url=1,f"{self.hsot}{id}"
             
         return  {'parse': p, 'url': url, 'header': self.pheader}
 
@@ -274,14 +270,12 @@ class Spider(Spider):
         for index, string in enumerate(lines):
             if '#EXT' not in string:
                 if 'http' not in string:
-                    # 修正相对路径：如果路径中包含斜杠少于2个，使用上一级目录；否则使用域名根目录
-                    # 原始逻辑：domain=last_r if string.count('/') < 2 else durl
-                    # 优化为：如果以 / 开头，使用 durl；否则，使用 last_r (更常见于m3u8)
+                    # 修正相对路径
                     domain = durl if string.startswith('/') else last_r
                     string = domain + ('' if string.startswith('/') else '/') + string
                 lines[index] = self.proxy(string, string.split('.')[-1].split('?')[0])
         data = '\n'.join(lines)
-        return [200, "application/vnd.apple.mpegurl", data] # 修正 Content-Type
+        return [200, "application/vnd.apple.mpegurl", data]
 
     def tsProxy(self, url,type):
         h=self.pheader.copy()
