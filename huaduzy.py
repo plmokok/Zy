@@ -6,7 +6,7 @@ import sys
 import threading
 import time
 from base64 import b64encode, b64decode
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse
 import requests
 from pyquery import PyQuery as pq
 sys.path.append('..')
@@ -17,7 +17,7 @@ class Spider(Spider):
 
     def init(self, extend=""):
         '''
-        初始化方法
+        初始化方法 - 保持A版不变
         '''
         self.session = requests.Session()
         self.headers = {
@@ -42,7 +42,7 @@ class Spider(Spider):
         self.session.headers.update(self.headers)
 
     def getName(self):
-        return "花都影视深度修复版"
+        return "花都影视诊断版"
 
     def isVideoFormat(self, url):
         return True
@@ -102,274 +102,101 @@ class Spider(Spider):
 
     def playerContent(self, flag, id, vipFlags):
         """
-        深度修复播放内容获取
+        播放内容获取 - 诊断版本，详细记录每个关键节点
         """
+        print("=== 播放诊断开始 ===")
+        
         try:
-            print(f"=== 开始处理播放地址 ===")
-            play_page_url = f"{self.host}{id}"
-            print(f"播放页面: {play_page_url}")
+            # 关键节点0：获取播放页面
+            play_url = f"{self.host}{id}"
+            print(f"关键节点0 - 播放页面URL: {play_url}")
             
-            # 获取播放页面
-            response = self.session.get(play_page_url)
+            response = self.session.get(play_url)
+            print(f"关键节点0 - 页面响应状态: {response.status_code}")
+            
             data = self.getpq(response)
             
-            # 方法1: 从JavaScript中提取播放地址
-            video_url = self.extract_video_url_advanced(data, play_page_url)
-            if video_url and self.validate_video_url(video_url):
-                print(f"成功提取播放地址: {video_url}")
-                return self.create_play_result(video_url, 0)
+            # 关键节点1：查找脚本
+            scripts = data('.stui-player.col-pd script')
+            print(f"关键节点1 - 找到脚本数量: {scripts.length}")
             
-            # 方法2: 尝试直接播放页面
-            print("使用直接播放页面方案")
-            return self.create_play_result(play_page_url, 1)
+            if scripts.length == 0:
+                print("关键节点1 - 错误: 未找到脚本元素")
+                raise Exception("未找到播放脚本")
+            
+            jstr = scripts.eq(0).text()
+            print(f"关键节点1 - 脚本内容预览: {jstr[:200]}...")
+            
+            # 关键节点2：JSON解析
+            json_part = jstr.split("=", maxsplit=1)[-1].strip()
+            print(f"关键节点2 - JSON部分: {json_part[:100]}...")
+            
+            # 清理JSON格式
+            if json_part.endswith(';'):
+                json_part = json_part[:-1]
+            
+            jsdata = json.loads(json_part)
+            print(f"关键节点2 - 解析后的JSON: {jsdata}")
+            
+            # 关键节点3：URL提取
+            if 'url' not in jsdata:
+                print(f"关键节点3 - 错误: JSON中未找到url字段，可用字段: {list(jsdata.keys())}")
+                raise Exception("JSON中缺少url字段")
+            
+            url = jsdata['url']
+            print(f"关键节点3 - 提取的URL: {url}")
+            
+            # 关键节点4：URL处理
+            if not url.startswith('http'):
+                if url.startswith('//'):
+                    url = 'https:' + url
+                    print(f"关键节点4 - 修复协议相对URL: {url}")
+                else:
+                    url = self.host + url
+                    print(f"关键节点4 - 修复相对URL: {url}")
+            
+            p = 0
+            
+            # 关键节点5：m3u8检测和代理
+            if '.m3u8' in url:
+                print("关键节点5 - 检测到M3U8格式，启用代理")
+                original_url = url
+                url = self.proxy(url, 'm3u8')
+                print(f"关键节点5 - 代理前URL: {original_url}")
+                print(f"关键节点5 - 代理后URL: {url}")
+            else:
+                print(f"关键节点5 - 非M3U8格式，直接使用: {url}")
+            
+            print(f"=== 播放诊断成功 ===")
+            print(f"最终播放URL: {url}")
+            print(f"解析模式: {p}")
+            
+            return {'parse': p, 'url': url, 'header': self.get_player_headers()}
             
         except Exception as e:
-            print(f"播放处理异常: {e}")
+            print(f"=== 播放诊断失败 ===")
+            print(f"错误信息: {str(e)}")
             import traceback
             traceback.print_exc()
-            return self.create_play_result(f"{self.host}{id}", 1)
-
-    def extract_video_url_advanced(self, data, play_page_url):
-        """
-        高级视频地址提取方法
-        """
-        # 策略1: 从脚本中提取标准JSON格式
-        scripts = data('.stui-player.col-pd script')
-        for script in scripts.items():
-            script_text = script.text()
-            print(f"检查脚本: {script_text[:100]}...")
             
-            # 尝试提取标准JSON
-            video_url = self.extract_standard_json(script_text)
-            if video_url:
-                return video_url
-                
-            # 尝试提取加密或编码的URL
-            video_url = self.extract_encoded_url(script_text)
-            if video_url:
-                return video_url
-                
-            # 尝试提取变量赋值格式
-            video_url = self.extract_variable_assignment(script_text)
-            if video_url:
-                return video_url
-        
-        # 策略2: 检查iframe
-        iframe = data('iframe')
-        if iframe.length > 0:
-            iframe_src = iframe.attr('src')
-            if iframe_src:
-                print(f"找到iframe: {iframe_src}")
-                # 处理相对URL
-                if not iframe_src.startswith('http'):
-                    if iframe_src.startswith('//'):
-                        iframe_src = 'https:' + iframe_src
-                    else:
-                        iframe_src = self.host + iframe_src
-                return iframe_src
-        
-        # 策略3: 检查视频标签
-        video = data('video source')
-        if video.length > 0:
-            video_src = video.attr('src')
-            if video_src:
-                print(f"找到video标签: {video_src}")
-                if not video_src.startswith('http'):
-                    if video_src.startswith('//'):
-                        video_src = 'https:' + video_src
-                    else:
-                        video_src = self.host + video_src
-                return video_src
-        
-        # 策略4: 在页面HTML中搜索视频URL模式
-        html_content = data.html()
-        video_url = self.search_video_patterns(html_content)
-        if video_url:
-            return video_url
+            # 关键节点6：备用方案
+            print("使用备用方案")
+            backup_url = f"{self.host}{id}"
+            print(f"备用URL: {backup_url}")
             
-        return None
-
-    def extract_standard_json(self, script_text):
-        """提取标准JSON格式的播放地址"""
-        try:
-            # 匹配常见的JSON格式
-            patterns = [
-                r'player_data\s*=\s*({[^;]+});',
-                r'var\s+player_\w+\s*=\s*({[^;]+});',
-                r'video_info\s*=\s*({[^;]+});',
-                r'=\s*({[^;]+})\.url',
-            ]
-            
-            for pattern in patterns:
-                match = re.search(pattern, script_text)
-                if match:
-                    json_str = match.group(1)
-                    # 修复常见的JSON格式问题
-                    json_str = self.fix_json_format(json_str)
-                    jsdata = json.loads(json_str)
-                    
-                    if 'url' in jsdata and jsdata['url']:
-                        url = jsdata['url']
-                        return self.process_extracted_url(url)
-                        
-        except Exception as e:
-            print(f"标准JSON提取失败: {e}")
-            
-        return None
-
-    def extract_encoded_url(self, script_text):
-        """提取编码或加密的URL"""
-        try:
-            # 查找Base64编码的URL
-            base64_patterns = [
-                r'url\s*:\s*["\']([A-Za-z0-9+/=]+)["\']',
-                r'="([A-Za-z0-9+/=]{20,})"',
-            ]
-            
-            for pattern in base64_patterns:
-                matches = re.findall(pattern, script_text)
-                for match in matches:
-                    try:
-                        decoded = b64decode(match).decode('utf-8')
-                        if self.validate_video_url(decoded):
-                            return self.process_extracted_url(decoded)
-                    except:
-                        continue
-            
-            # 查找URL编码的地址
-            encoded_patterns = [
-                r'url\s*:\s*decodeURIComponent\(["\']([^"\']+)["\']\)',
-                r'decodeURIComponent\(["\']([^"\']+)["\']\)',
-            ]
-            
-            for pattern in encoded_patterns:
-                matches = re.findall(pattern, script_text)
-                for match in matches:
-                    try:
-                        decoded = unquote(match)
-                        if self.validate_video_url(decoded):
-                            return self.process_extracted_url(decoded)
-                    except:
-                        continue
-                        
-        except Exception as e:
-            print(f"编码URL提取失败: {e}")
-            
-        return None
-
-    def extract_variable_assignment(self, script_text):
-        """提取变量赋值格式的URL"""
-        try:
-            # 查找直接赋值格式
-            patterns = [
-                r'player\.url\s*=\s*["\']([^"\']+)["\']',
-                r'url\s*=\s*["\']([^"\']+)["\']',
-                r'src\s*=\s*["\']([^"\']+)["\']',
-                r'file\s*=\s*["\']([^"\']+)["\']',
-            ]
-            
-            for pattern in patterns:
-                matches = re.findall(pattern, script_text, re.IGNORECASE)
-                for match in matches:
-                    if self.validate_video_url(match):
-                        return self.process_extracted_url(match)
-                        
-        except Exception as e:
-            print(f"变量赋值提取失败: {e}")
-            
-        return None
-
-    def search_video_patterns(self, html_content):
-        """在HTML内容中搜索视频URL模式"""
-        try:
-            # 直接搜索视频文件URL
-            video_patterns = [
-                r'https?://[^\s"\']+\.(m3u8|mp4|flv)[^\s"\']*',
-                r'//[^\s"\']+\.(m3u8|mp4|flv)[^\s"\']*',
-            ]
-            
-            for pattern in video_patterns:
-                matches = re.findall(pattern, html_content, re.IGNORECASE)
-                for match in matches:
-                    url = match if isinstance(match, str) else match[0]
-                    if not url.startswith('http'):
-                        url = 'https:' + url if url.startswith('//') else self.host + url
-                    
-                    if self.validate_video_url(url):
-                        return url
-                        
-        except Exception as e:
-            print(f"模式搜索失败: {e}")
-            
-        return None
-
-    def fix_json_format(self, json_str):
-        """修复JSON格式问题"""
-        # 修复常见的JSON格式错误
-        json_str = re.sub(r',\s*}', '}', json_str)  # 移除尾随逗号
-        json_str = re.sub(r',\s*]', ']', json_str)  # 移除尾随逗号
-        json_str = re.sub(r"'", '"', json_str)  # 单引号转双引号
-        return json_str
-
-    def process_extracted_url(self, url):
-        """处理提取到的URL"""
-        if not url.startswith('http'):
-            if url.startswith('//'):
-                url = 'https:' + url
-            else:
-                url = self.host + url
-        
-        # 对m3u8文件进行特殊处理
-        if '.m3u8' in url:
-            url = self.proxy(url, 'm3u8')
-            
-        return url
-
-    def validate_video_url(self, url):
-        """验证视频URL是否有效"""
-        if not url:
-            return False
-            
-        # 检查URL格式
-        if not (url.startswith('http://') or url.startswith('https://')):
-            return False
-            
-        # 检查是否包含视频文件扩展名或特征
-        video_indicators = ['.m3u8', '.mp4', '.flv', 'm3u8', 'index.m3u8']
-        if not any(indicator in url.lower() for indicator in video_indicators):
-            return False
-            
-        print(f"URL验证通过: {url}")
-        return True
-
-    def create_play_result(self, url, parse_type):
-        """创建播放结果"""
-        headers = self.get_player_headers()
-        
-        # 对于m3u8文件，确保使用正确的Content-Type
-        if '.m3u8' in url and parse_type == 0:
-            # 直接返回m3u8地址，让播放器处理
-            return {
-                'parse': parse_type,
-                'url': url,
-                'header': headers
-            }
-        else:
-            return {
-                'parse': parse_type,
-                'url': url,
-                'header': headers
-            }
+            return {'parse': 1, 'url': backup_url, 'header': self.get_player_headers()}
 
     def get_player_headers(self):
-        """获取播放器头部信息"""
-        return {
+        """获取播放器头部信息 - 诊断版本"""
+        headers = {
             'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
             'Referer': f'{self.host}/',
             'Origin': self.host,
             'Accept': '*/*',
             'Accept-Language': 'zh-CN,zh;q=0.9',
         }
+        print(f"播放器头部: {headers}")
+        return headers
 
     def liveContent(self, url):
         return []
@@ -377,11 +204,14 @@ class Spider(Spider):
     def localProxy(self, param):
         try:
             url = self.d64(param['url'])
+            print(f"代理请求 - URL: {url}, 类型: {param.get('type')}")
+            
             if param.get('type') == 'm3u8':
                 return self.m3Proxy(url)
             else:
                 return self.tsProxy(url, param.get('type', 'ts'))
         except Exception as e:
+            print(f"代理错误: {e}")
             return [500, "text/plain", f"Proxy Error: {e}"]
 
     def gethost(self):
@@ -446,26 +276,41 @@ class Spider(Spider):
 
     def m3Proxy(self, url):
         try:
+            print(f"M3U8代理 - 请求URL: {url}")
             ydata = requests.get(url, headers=self.get_player_headers(), proxies=self.proxies, allow_redirects=False)
-            data = ydata.content.decode('utf-8')
+            print(f"M3U8代理 - 响应状态: {ydata.status_code}")
+            
             if ydata.headers.get('Location'):
+                print(f"M3U8代理 - 重定向到: {ydata.headers['Location']}")
                 url = ydata.headers['Location']
-                data = requests.get(url, headers=self.get_player_headers(), proxies=self.proxies).content.decode('utf-8')
+                ydata = requests.get(url, headers=self.get_player_headers(), proxies=self.proxies)
+            
+            data = ydata.content.decode('utf-8')
+            print(f"M3U8代理 - 内容长度: {len(data)}")
+            print(f"M3U8代理 - 内容预览: {data[:200]}...")
+            
             return [200, "application/vnd.apple.mpegurl", data]
         except Exception as e:
+            print(f"M3U8代理错误: {e}")
             return [500, "text/plain", f"M3U8 Proxy Error: {e}"]
 
     def tsProxy(self, url, file_type):
         try:
+            print(f"TS代理 - 请求URL: {url}, 类型: {file_type}")
             headers = self.get_player_headers()
             data = requests.get(url, headers=headers, proxies=self.proxies, stream=True)
+            print(f"TS代理 - 响应状态: {data.status_code}")
             return [200, data.headers.get('Content-Type', 'video/mp2t'), data.content]
         except Exception as e:
+            print(f"TS代理错误: {e}")
             return [500, "text/plain", f"TS Proxy Error: {e}"]
 
     def proxy(self, data, file_type='img'):
         if data and len(self.proxies):
-            return f"{self.getProxyUrl()}&url={self.e64(data)}&type={file_type}"
+            proxy_url = f"{self.getProxyUrl()}&url={self.e64(data)}&type={file_type}"
+            print(f"代理URL生成 - 原始: {data}")
+            print(f"代理URL生成 - 代理: {proxy_url}")
+            return proxy_url
         else:
             return data
 
