@@ -6,7 +6,7 @@ import sys
 import threading
 import time
 from base64 import b64encode, b64decode
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse
 import requests
 from pyquery import PyQuery as pq
 sys.path.append('..')
@@ -17,7 +17,8 @@ class Spider(Spider):
 
     def init(self, extend=""):
         '''
-        保持与A版完全相同的初始化
+        如果一直访问不了，手动访问导航页:https://a.hdys.top，替换：
+        self.host = 'https://xxx.xxx.xxx'
         '''
         self.session = requests.Session()
         self.headers = {
@@ -34,8 +35,9 @@ class Spider(Spider):
         }
         try:self.proxies = json.loads(extend)
         except:self.proxies = {}
-        self.host = self.gethost()
-        self.headers.update({'referer': f"{self.host}/"})
+        self.hsot=self.gethost()
+        # self.hsot='https://hd.hdys2.com'
+        self.headers.update({'referer': f"{self.hsot}/"})
         self.session.proxies.update(self.proxies)
         self.session.headers.update(self.headers)
         pass
@@ -67,7 +69,7 @@ class Spider(Spider):
     }
 
     def homeContent(self, filter):
-        data=self.getpq(self.session.get(self.host))
+        data=self.getpq(self.session.get(self.hsot))
         cdata=data('.stui-header__menu.type-slide li')
         ldata=data('.stui-vodlist.clearfix li')
         result = {}
@@ -87,7 +89,7 @@ class Spider(Spider):
         return {'list':''}
 
     def categoryContent(self, tid, pg, filter, extend):
-        data=self.getpq(self.session.get(f"{self.host}/vodshow/{tid}--------{pg}---.html"))
+        data=self.getpq(self.session.get(f"{self.hsot}/vodshow/{tid}--------{pg}---.html"))
         result = {}
         result['list'] = self.getlist(data('.stui-vodlist.clearfix li'))
         result['page'] = pg
@@ -97,7 +99,7 @@ class Spider(Spider):
         return result
 
     def detailContent(self, ids):
-        data=self.getpq(self.session.get(f"{self.host}{ids[0]}"))
+        data=self.getpq(self.session.get(f"{self.hsot}{ids[0]}"))
         v=data('.stui-vodlist__box a')
         vod = {
             'vod_play_from': '花都影视',
@@ -106,72 +108,20 @@ class Spider(Spider):
         return {'list':[vod]}
 
     def searchContent(self, key, quick, pg="1"):
-        data=self.getpq(self.session.get(f"{self.host}/vodsearch/{key}----------{pg}---.html"))
+        data=self.getpq(self.session.get(f"{self.hsot}/vodsearch/{key}----------{pg}---.html"))
         return {'list':self.getlist(data('.stui-vodlist.clearfix li')),'page':pg}
 
     def playerContent(self, flag, id, vipFlags):
-        """
-        播放内容获取 - 基于正确答案的解密版本
-        只修改这个方法，其他保持与A版完全相同
-        """
         try:
-            # 获取播放页面
-            play_page_url = f"{self.host}{id}"
-            response = self.session.get(play_page_url)
-            data = self.getpq(response)
-            
-            # 提取player_data脚本
-            scripts = data('.stui-player.col-pd script')
-            if scripts.length == 0:
-                # 如果找不到脚本，使用备用方案
-                p, url = 1, play_page_url
-                return {'parse': p, 'url': url, 'header': self.pheader}
-            
-            script_text = scripts.eq(0).text()
-            
-            # 解析player_data
-            player_data = self.extract_player_data(script_text)
-            if not player_data:
-                # 如果解析失败，使用备用方案
-                p, url = 1, play_page_url
-                return {'parse': p, 'url': url, 'header': self.pheader}
-            
-            # 解密视频URL
-            encrypted_url = player_data.get('url', '')
-            if encrypted_url:
-                # 双重URL解码
-                video_url = unquote(unquote(encrypted_url))
-                p, url = 0, video_url
-                
-                # 如果是m3u8文件，启用代理
-                if '.m3u8' in url:
-                    url = self.proxy(url, 'm3u8')
-            else:
-                # 如果没有提取到URL，使用备用方案
-                p, url = 1, play_page_url
-                
+            data=self.getpq(self.session.get(f"{self.hsot}{id}"))
+            jstr=data('.stui-player.col-pd script').eq(0).text()
+            jsdata=json.loads(jstr.split("=", maxsplit=1)[-1])
+            p,url=0,jsdata['url']
+            if '.m3u8' in url:url=self.proxy(url,'m3u8')
         except Exception as e:
             print(f"{str(e)}")
-            p, url = 1, f"{self.host}{id}"
-            
-        return {'parse': p, 'url': url, 'header': self.pheader}
-
-    def extract_player_data(self, script_text):
-        """从脚本中提取player_data - 辅助方法"""
-        try:
-            # 查找player_data变量
-            match = re.search(r'var\s+player_data\s*=\s*({[^;]+});', script_text)
-            if match:
-                return json.loads(match.group(1))
-            
-            match = re.search(r'player_data\s*=\s*({[^;]+});', script_text)
-            if match:
-                return json.loads(match.group(1))
-                
-        except:
-            pass
-            
-        return None
+            p,url=1,f"{self.hsot}{id}"
+        return  {'parse': p, 'url': url, 'header': self.pheader}
 
     def liveContent(self, url):
         pass
@@ -271,10 +221,6 @@ class Spider(Spider):
     def proxy(self, data, type='img'):
         if data and len(self.proxies):return f"{self.getProxyUrl()}&url={self.e64(data)}&type={type}"
         else:return data
-
-    def getProxyUrl(self):
-        """添加缺失的代理URL方法"""
-        return "http://127.0.0.1:9978/proxy?do=py"
 
     def e64(self, text):
         try:
