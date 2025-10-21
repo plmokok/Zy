@@ -113,64 +113,24 @@ class Spider(Spider):
 
     def playerContent(self, flag, id, vipFlags):
         """
-        播放内容获取 - 最终解决方案
-        直接返回已知的正确视频地址
+        播放内容获取 - 最小修改版本
+        只修改这一行：在提取URL后立即进行双重解码
         """
-        print("=== 使用最终解决方案 ===")
-        
-        # 已知的正确视频地址格式
-        # https://cdn5.hdzy.xyz/videos/2025/10/14/68edb0317a1db507cf9584d2/1461a4/index.m3u8
-        
         try:
-            # 获取播放页面以提取视频ID
-            play_page_url = f"{self.hsot}{id}"
-            response = self.session.get(play_page_url)
-            data = self.getpq(response)
+            data=self.getpq(self.session.get(f"{self.hsot}{id}"))
+            jstr=data('.stui-player.col-pd script').eq(0).text()
+            jsdata=json.loads(jstr.split("=", maxsplit=1)[-1])
             
-            # 提取视频ID（从播放页面URL中提取）
-            # 播放页面URL格式: /vodplay/19702-1-1.html
-            # 视频ID: 19702
-            match = re.search(r'/vodplay/(\d+)', id)
-            if match:
-                video_id = match.group(1)
-                print(f"提取的视频ID: {video_id}")
-                
-                # 使用固定的视频地址模板
-                # 注意：这只是一个示例，实际需要根据视频ID生成正确的地址
-                video_url = f"https://cdn5.hdzy.xyz/videos/2025/10/14/{video_id}/index.m3u8"
-                
-                print(f"生成的视频URL: {video_url}")
-                
-                # 返回直接播放
-                return {'parse': 0, 'url': video_url, 'header': self.pheader}
-            else:
-                print("无法提取视频ID，使用备用方案")
-                raise Exception("无法提取视频ID")
-                
+            # 唯一修改：对提取的URL进行双重解码
+            encrypted_url = jsdata['url']
+            video_url = unquote(unquote(encrypted_url))
+            
+            p,url=0,video_url
+            if '.m3u8' in url:url=self.proxy(url,'m3u8')
         except Exception as e:
-            print(f"最终解决方案失败: {e}")
-            
-            # 备用方案：尝试原始解密方法
-            try:
-                data=self.getpq(self.session.get(f"{self.hsot}{id}"))
-                jstr=data('.stui-player.col-pd script').eq(0).text()
-                jsdata=json.loads(jstr.split("=", maxsplit=1)[-1])
-                
-                # 双重URL解码
-                encrypted_url = jsdata['url']
-                video_url = unquote(unquote(encrypted_url))
-                
-                print(f"备用方案解密URL: {video_url}")
-                
-                p,url=0,video_url
-                if '.m3u8' in url:url=self.proxy(url,'m3u8')
-                
-                return {'parse': p, 'url': url, 'header': self.pheader}
-            except Exception as e2:
-                print(f"备用方案也失败: {e2}")
-                
-                # 最终备用方案：返回页面URL让播放器解析
-                return {'parse': 1, 'url': f"{self.hsot}{id}", 'header': self.pheader}
+            print(f"{str(e)}")
+            p,url=1,f"{self.hsot}{id}"
+        return  {'parse': p, 'url': url, 'header': self.pheader}
 
     def liveContent(self, url):
         pass
@@ -270,9 +230,6 @@ class Spider(Spider):
     def proxy(self, data, type='img'):
         if data and len(self.proxies):return f"{self.getProxyUrl()}&url={self.e64(data)}&type={type}"
         else:return data
-
-    def getProxyUrl(self):
-        return "http://127.0.0.1:9978/proxy?do=py"
 
     def e64(self, text):
         try:
