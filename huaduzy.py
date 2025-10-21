@@ -6,7 +6,7 @@ import sys
 import threading
 import time
 from base64 import b64encode, b64decode
-from urllib.parse import urlparse, urljoin # <-- 引入 urljoin
+from urllib.parse import urlparse
 import requests
 from pyquery import PyQuery as pq
 sys.path.append('..')
@@ -14,38 +14,41 @@ from base.spider import Spider
 
 
 class Spider(Spider):
-    
-    # ... (init, getName, isVideoFormat, manualVideoCheck, destroy 保持不变)
 
     def init(self, extend=""):
-        # 保持原始代码不变
+        '''
+        初始化方法
+        '''
         self.session = requests.Session()
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
-            'sec-ch-ua-platform': '"Android"',
-            'sec-ch-ua': '"Not/A)Brand";v="8", "Chromium";v="130", "Google Chrome";v="130"',
-            'dnt': '1',
-            'sec-ch-ua-mobile': '?1',
-            'sec-fetch-site': 'same-origin',
-            'sec-fetch-mode': 'no-cors',
-            'sec-fetch-dest': 'script',
-            'accept-language': 'zh-CN,zh;q=0.9',
-            'priority': 'u=2',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'Accept-Language': 'zh-CN,zh;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+            'Upgrade-Insecure-Requests': '1',
+            'Sec-Fetch-Dest': 'document',
+            'Sec-Fetch-Mode': 'navigate',
+            'Sec-Fetch-Site': 'none',
+            'Cache-Control': 'max-age=0',
         }
-        try:self.proxies = json.loads(extend)
-        except:self.proxies = {}
-        self.hsot=self.gethost()
-        # self.hsot='https://hd.hdys2.com'
-        self.headers.update({'referer': f"{self.hsot}/"})
+        
+        try:
+            self.proxies = json.loads(extend)
+        except:
+            self.proxies = {}
+            
+        self.host = self.gethost()
+        self.headers.update({'referer': f"{self.host}/"})
         self.session.proxies.update(self.proxies)
         self.session.headers.update(self.headers)
-        pass
 
     def getName(self):
-        pass
+        return "花都影视"
 
     def isVideoFormat(self, url):
-        pass
+        return True
 
     def manualVideoCheck(self):
         pass
@@ -53,68 +56,33 @@ class Spider(Spider):
     def destroy(self):
         pass
 
-
-    pheader={
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
-        'sec-ch-ua-platform': '"Android"',
-        'sec-ch-ua': '"Not/A)Brand";v="8", "Chromium";v="130", "Google Chrome";v="130"',
-        'dnt': '1',
-        'sec-ch-ua-mobile': '?1',
-        'origin': 'https://jx.8852.top', # <-- 维持原始值
-        'sec-fetch-site': 'cross-site',
-        'sec-fetch-mode': 'cors',
-        'sec-fetch-dest': 'empty',
-        'accept-language': 'zh-CN,zh;q=0.9',
-        'priority': 'u=1, i',
-        # **新增：添加一个默认的 referer 字段，将在播放时被覆盖**
-        'referer': 'https://jx.8852.top/' 
-    }
-
-    # **新增辅助函数：用于动态生成播放头，注入正确的 Referer**
-    def get_dynamic_pheader(self, url):
-        pheader = self.pheader.copy()
-        
-        # 默认使用主站的详情页作为 Referer，这是最保险的策略
-        # 播放器 ID (id) 在 playerContent 中是可用的
-        # pheader['referer'] = f"{self.hsot}{self.current_video_id}" # 复杂，暂时不用
-
-        # **修复策略 A：将 Referer 设置为视频源的根域名 (通用防盗链)**
-        try:
-            parsed = urlparse(url)
-            referer_root = f"{parsed.scheme}://{parsed.netloc}/"
-            pheader['referer'] = referer_root
-            pheader['origin'] = referer_root.strip('/') # 同时修正 origin
-        except Exception:
-            # 如果解析失败，回退到主站
-            pheader['referer'] = f"{self.hsot}/"
-            pheader['origin'] = self.hsot
-
-        return pheader
-
-    # ... (homeContent, categoryContent, detailContent, searchContent 保持不变)
-    
     def homeContent(self, filter):
-        data=self.getpq(self.session.get(self.hsot))
-        cdata=data('.stui-header__menu.type-slide li')
-        ldata=data('.stui-vodlist.clearfix li')
+        data = self.getpq(self.session.get(self.host))
+        cdata = data('.stui-header__menu.type-slide li')
+        ldata = data('.stui-vodlist.clearfix li')
         result = {}
         classes = []
+        
         for k in cdata.items():
-            i=k('a').attr('href')
+            i = k('a').attr('href')
             if i and 'type' in i:
-                classes.append({
-                    'type_name': k.text(),
-                    'type_id': re.search(r'\d+', i).group(0)
-                })
+                match = re.search(r'\d+', i)
+                if match:
+                    classes.append({
+                        'type_name': k.text(),
+                        'type_id': match.group(0)
+                    })
+                    
         result['class'] = classes
         result['list'] = self.getlist(ldata)
         return result
 
     def homeVideoContent(self):
-        return {'list':''}
+        return {'list': []}
 
     def categoryContent(self, tid, pg, filter, extend):
-        data=self.getpq(self.session.get(f"{self.hsot}/vodshow/{tid}--------{pg}---.html"))
+        url = f"{self.host}/vodshow/{tid}--------{pg}---.html"
+        data = self.getpq(self.session.get(url))
         result = {}
         result['list'] = self.getlist(data('.stui-vodlist.clearfix li'))
         result['page'] = pg
@@ -124,113 +92,263 @@ class Spider(Spider):
         return result
 
     def detailContent(self, ids):
-        data=self.getpq(self.session.get(f"{self.hsot}{ids[0]}"))
-        v=data('.stui-vodlist__box a')
-        
-        # **新增：临时存储当前视频 ID，以便在 playerContent 中生成 Referer**
-        # self.current_video_id = ids[0] # 这是一个更复杂的方案，暂不使用
+        url = f"{self.host}{ids[0]}"
+        data = self.getpq(self.session.get(url))
+        v = data('.stui-vodlist__box a')
         
         vod = {
+            'vod_id': ids[0],
+            'vod_name': v('img').attr('alt') or '未知',
+            'vod_pic': self.proxy(v('img').attr('data-original')),
             'vod_play_from': '花都影视',
-            'vod_play_url': f"{v('img').attr('alt')}${v.attr('href')}"
+            'vod_play_url': f"第1集${v.attr('href')}" if v.attr('href') else ""
         }
-        return {'list':[vod]}
+        return {'list': [vod]}
 
     def searchContent(self, key, quick, pg="1"):
-        data=self.getpq(self.session.get(f"{self.hsot}/vodsearch/{key}----------{pg}---.html"))
-        return {'list':self.getlist(data('.stui-vodlist.clearfix li')),'page':pg}
+        url = f"{self.host}/vodsearch/{key}----------{pg}---.html"
+        data = self.getpq(self.session.get(url))
+        return {'list': self.getlist(data('.stui-vodlist.clearfix li')), 'page': pg}
 
     def playerContent(self, flag, id, vipFlags):
-        dynamic_header = self.pheader.copy() # 默认使用原始 pheader 副本
+        """
+        播放内容获取 - 简化版本，专注于获取可播放的URL
+        """
         try:
-            data=self.getpq(self.session.get(f"{self.hsot}{id}"))
-            jstr=data('.stui-player.col-pd script').eq(0).text()
-            jsdata=json.loads(jstr.split("=", maxsplit=1)[-1])
-            p,url=0,jsdata['url']
+            # 直接构建播放页URL
+            play_page_url = f"{self.host}{id}"
+            print(f"正在获取播放页: {play_page_url}")
             
-            # **核心修复 1：获取包含正确 Referer 的 header**
-            dynamic_header = self.get_dynamic_pheader(url)
-            
-            if '.m3u8' in url:
-                url=self.proxy(url,'m3u8')
-            # 增加对常见视频直链的代理封装
-            elif re.search(r'\.(mp4|flv|ts)', url, re.I):
-                url = self.proxy(url, url.split('.')[-1].split('?')[0])
+            # 获取播放页面
+            response = self.session.get(play_page_url)
+            if response.status_code != 200:
+                print(f"页面请求失败: {response.status_code}")
+                return self.fallback_player_content(play_page_url)
                 
-        except Exception as e:
-            print(f"{str(e)}")
-            p,url=1,f"{self.hsot}{id}"
+            data = self.getpq(response)
             
-        # **核心修复 2：返回动态生成的 header**
-        return  {'parse': p, 'url': url, 'header': dynamic_header}
+            # 方法1: 从脚本中提取播放地址
+            play_url = self.extract_from_script(data)
+            if play_url:
+                return {'parse': 0, 'url': play_url, 'header': self.get_player_headers()}
+                
+            # 方法2: 从iframe中提取
+            play_url = self.extract_from_iframe(data)
+            if play_url:
+                return {'parse': 1, 'url': play_url, 'header': self.get_player_headers()}
+                
+            # 方法3: 使用备用方案
+            return self.fallback_player_content(play_page_url)
+            
+        except Exception as e:
+            print(f"播放内容获取异常: {str(e)}")
+            return self.fallback_player_content(f"{self.host}{id}")
+
+    def extract_from_script(self, data):
+        """从脚本中提取播放地址"""
+        try:
+            scripts = data('.stui-player.col-pd script')
+            if scripts.length == 0:
+                return None
+                
+            for script in scripts.items():
+                script_text = script.text()
+                if 'url' in script_text and '=' in script_text:
+                    # 尝试提取JSON数据
+                    json_part = script_text.split('=', 1)[-1].strip()
+                    if json_part.endswith(';'):
+                        json_part = json_part[:-1]
+                        
+                    jsdata = json.loads(json_part)
+                    if 'url' in jsdata and jsdata['url']:
+                        url = jsdata['url']
+                        print(f"从脚本提取到播放URL: {url}")
+                        return url
+        except Exception as e:
+            print(f"脚本提取失败: {e}")
+            
+        return None
+
+    def extract_from_iframe(self, data):
+        """从iframe中提取播放地址"""
+        try:
+            iframe = data('iframe')
+            if iframe.length > 0:
+                src = iframe.attr('src')
+                if src and src.startswith('http'):
+                    print(f"从iframe提取到播放URL: {src}")
+                    return src
+        except Exception as e:
+            print(f"iframe提取失败: {e}")
+            
+        return None
+
+    def fallback_player_content(self, url):
+        """备用播放方案"""
+        print(f"使用备用方案，直接返回页面URL: {url}")
+        return {
+            'parse': 1, 
+            'url': url, 
+            'header': self.get_player_headers()
+        }
+
+    def get_player_headers(self):
+        """获取播放器头部信息"""
+        return {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+            'Referer': f'{self.host}/',
+            'Origin': self.host,
+            'Accept': '*/*',
+            'Accept-Language': 'zh-CN,zh;q=0.9',
+            'Accept-Encoding': 'gzip, deflate, br',
+            'DNT': '1',
+            'Connection': 'keep-alive',
+        }
 
     def liveContent(self, url):
-        pass
+        return []
 
     def localProxy(self, param):
-        url = self.d64(param['url'])
-        if param.get('type') == 'm3u8':
-            return self.m3Proxy(url)
-        else:
-            return self.tsProxy(url,param['type'])
+        """本地代理 - 简化版本"""
+        try:
+            url = self.d64(param['url'])
+            if param.get('type') == 'm3u8':
+                return self.m3Proxy(url)
+            else:
+                return self.tsProxy(url, param.get('type', 'ts'))
+        except Exception as e:
+            print(f"代理处理错误: {e}")
+            return [500, "text/plain", f"Proxy Error: {e}"]
 
-    # ... (gethost, getlist, getpq, host_late 保持不变)
+    def gethost(self):
+        """获取可用主机"""
+        try:
+            response = self.session.get('https://a.hdys.top/assets/js/config.js')
+            urls = re.findall(r'"([^"]*)"', response.text)
+            if urls:
+                return self.host_late(urls)
+        except Exception as e:
+            print(f"获取主机失败: {e}")
+            
+        # 备用主机
+        return 'https://hd.hdys2.com'
+
+    def getlist(self, data):
+        """获取视频列表"""
+        videos = []
+        for i in data.items():
+            videos.append({
+                'vod_id': i('a').attr('href') or '',
+                'vod_name': i('img').attr('alt') or '未知',
+                'vod_pic': self.proxy(i('img').attr('data-original') or ''),
+                'vod_year': i('.pic-tag-t').text() or '',
+                'vod_remarks': i('.pic-tag-b').text() or ''
+            })
+        return videos
+
+    def getpq(self, data):
+        """PyQuery包装器"""
+        try:
+            return pq(data.text)
+        except:
+            try:
+                return pq(data.content.decode('utf-8'))
+            except:
+                return pq('')
+
+    def host_late(self, url_list):
+        """主机延迟测试"""
+        if not url_list:
+            return 'https://hd.hdys2.com'
+            
+        if len(url_list) == 1:
+            return url_list[0]
+
+        results = {}
+        threads = []
+
+        def test_host(url):
+            try:
+                start_time = time.time()
+                response = requests.head(url, timeout=3, allow_redirects=False)
+                delay = (time.time() - start_time) * 1000
+                results[url] = delay
+            except:
+                results[url] = float('inf')
+
+        for url in url_list:
+            t = threading.Thread(target=test_host, args=(url,))
+            threads.append(t)
+            t.start()
+
+        for t in threads:
+            t.join(timeout=5)
+
+        best_host = min(results.items(), key=lambda x: x[1])[0]
+        print(f"选择最佳主机: {best_host}")
+        return best_host
 
     def m3Proxy(self, url):
-        # **核心修复 3：M3U8 请求使用动态 header**
-        pheader = self.get_dynamic_pheader(url)
-        
-        ydata = requests.get(url, headers=pheader, proxies=self.proxies, allow_redirects=False)
-        data = ydata.content.decode('utf-8')
-        
-        if ydata.headers.get('Location'):
-            url = ydata.headers['Location']
-            data = requests.get(url, headers=pheader, proxies=self.proxies).content.decode('utf-8')
-            
-        lines = data.strip().split('\n')
-        last_r = url[:url.rfind('/')]
-        parsed_url = urlparse(url)
-        durl = parsed_url.scheme + "://" + parsed_url.netloc
-        
-        # **核心修复 4：M3U8 切片链接拼接使用 urljoin**
-        for index, string in enumerate(lines):
-            string = string.strip()
-            if '#EXT' not in string and string:
-                if 'http' not in string:
-                    # 使用 urljoin 替代原始的条件判断和字符串拼接
-                    string = urljoin(last_r + '/', string) 
-                lines[index] = self.proxy(string, string.split('.')[-1].split('?')[0])
+        """M3U8代理"""
+        try:
+            response = requests.get(url, headers=self.get_player_headers(), timeout=10)
+            if response.status_code != 200:
+                return [response.status_code, "text/plain", f"Failed to fetch M3U8: {response.status_code}"]
                 
-        data = '\n'.join(lines)
-        return [200, "application/vnd.apple.mpegurl", data] # <-- 更改 Content-Type
-
-    def tsProxy(self, url,type):
-        # **核心修复 5：TS/MP4/图片 请求使用动态 header**
-        h=self.get_dynamic_pheader(url)
-        if type=='img':
-            h=self.headers.copy()
+            content = response.text
+            lines = content.split('\n')
             
-        data = requests.get(url, headers=h, proxies=self.proxies, stream=True)
-        return [200, data.headers['Content-Type'], data.content]
+            # 简单的M3U8处理 - 不修改内容，直接返回
+            return [200, "application/vnd.apple.mpegurl", content]
+        except Exception as e:
+            print(f"M3U8代理错误: {e}")
+            return [500, "text/plain", f"M3U8 Proxy Error: {e}"]
 
-    def proxy(self, data, type='img'):
-        if data and len(self.proxies):return f"{self.getProxyUrl()}&url={self.e64(data)}&type={type}"
-        else:return data
+    def tsProxy(self, url, file_type):
+        """TS文件代理"""
+        try:
+            headers = self.get_player_headers()
+            response = requests.get(url, headers=headers, stream=True, timeout=10)
+            return [200, response.headers.get('content-type', 'video/mp2t'), response.content]
+        except Exception as e:
+            print(f"TS代理错误: {e}")
+            return [500, "text/plain", f"TS Proxy Error: {e}"]
+
+    def proxy(self, url, file_type='img'):
+        """代理URL生成"""
+        if not url:
+            return url
+            
+        # 如果是完整URL且不需要代理，直接返回
+        if url.startswith('http') and not self.proxies:
+            return url
+            
+        # 相对路径转绝对路径
+        if not url.startswith('http'):
+            if url.startswith('//'):
+                url = 'https:' + url
+            elif url.startswith('/'):
+                url = self.host + url
+            else:
+                url = self.host + '/' + url
+                
+        # 如果需要代理，生成代理URL
+        if self.proxies:
+            encoded_url = self.e64(url)
+            return f"http://127.0.0.1:9978/proxy?do=py&url={encoded_url}&type={file_type}"
+        else:
+            return url
 
     def e64(self, text):
+        """Base64编码"""
         try:
-            text_bytes = text.encode('utf-8')
-            encoded_bytes = b64encode(text_bytes)
-            return encoded_bytes.decode('utf-8')
-        except Exception as e:
-            print(f"Base64编码错误: {str(e)}")
+            return b64encode(text.encode('utf-8')).decode('utf-8')
+        except:
             return ""
 
-    def d64(self,encoded_text):
+    def d64(self, encoded_text):
+        """Base64解码"""
         try:
-            encoded_bytes = encoded_text.encode('utf-8')
-            decoded_bytes = b64decode(encoded_bytes)
-            return decoded_bytes.decode('utf-8')
-        except Exception as e:
-            print(f"Base64解码错误: {str(e)}")
+            return b64decode(encoded_text.encode('utf-8')).decode('utf-8')
+        except:
             return ""
