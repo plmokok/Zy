@@ -3,7 +3,6 @@
 import json
 import re
 import sys
-import threading
 import time
 from base64 import b64encode, b64decode
 from urllib.parse import urlparse, unquote
@@ -17,7 +16,7 @@ class Spider(Spider):
 
     def init(self, extend=""):
         '''
-        初始化 - 保持B版的稳定性
+        初始化 - 保持稳定性
         '''
         self.session = requests.Session()
         self.headers = {
@@ -40,7 +39,7 @@ class Spider(Spider):
         self.session.headers.update(self.headers)
 
     def getName(self):
-        return "花都影视播放修复版"
+        return "花都影视嗅探版"
 
     def isVideoFormat(self, url):
         return True
@@ -53,7 +52,7 @@ class Spider(Spider):
 
     def homeContent(self, filter):
         '''
-        首页内容 - 保持B版的稳定性
+        首页内容 - 保持稳定性
         '''
         try:
             response = self.session.get(self.host, timeout=10)
@@ -111,7 +110,7 @@ class Spider(Spider):
 
     def categoryContent(self, tid, pg, filter, extend):
         '''
-        分类内容 - 保持B版的稳定性
+        分类内容 - 保持稳定性
         '''
         try:
             url = f"{self.host}/vodshow/{tid}--------{pg}---.html"
@@ -158,7 +157,7 @@ class Spider(Spider):
 
     def detailContent(self, ids):
         '''
-        详情页 - 保持B版的稳定性
+        详情页 - 保持稳定性
         '''
         try:
             url = f"{self.host}{ids[0]}"
@@ -213,7 +212,7 @@ class Spider(Spider):
 
     def searchContent(self, key, quick, pg="1"):
         '''
-        搜索功能 - 保持B版的稳定性
+        搜索功能 - 保持稳定性
         '''
         try:
             import urllib.parse
@@ -257,10 +256,10 @@ class Spider(Spider):
 
     def playerContent(self, flag, id, vipFlags):
         """
-        播放内容获取 - 重点修复版本
-        使用多种策略获取真实的视频播放地址
+        播放内容获取 - 基于网络请求嗅探的版本
+        模拟VIA浏览器的视频嗅探行为
         """
-        print("=== 播放地址修复 ===")
+        print("=== 视频嗅探模式启动 ===")
         play_page_url = f"{self.host}{id}"
         print(f"播放页面: {play_page_url}")
         
@@ -274,69 +273,103 @@ class Spider(Spider):
             html_content = response.text
             data = pq(html_content)
             
-            # 策略1: 从JavaScript中提取真实播放地址
-            real_video_url = self.extract_real_video_url(data, html_content)
-            if real_video_url:
-                print(f"策略1成功: {real_video_url}")
-                return self.create_play_result(real_video_url, 0)
+            # 策略1: 直接搜索HTML中的m3u8链接
+            m3u8_urls = self.find_m3u8_in_html(html_content)
+            if m3u8_urls:
+                print(f"在HTML中找到{len(m3u8_urls)}个m3u8链接")
+                for url in m3u8_urls:
+                    if self.validate_m3u8_url(url):
+                        print(f"使用有效的m3u8链接: {url}")
+                        return self.create_play_result(url, 0)
             
-            # 策略2: 检查是否有直接视频标签
-            video_url = self.extract_direct_video_url(data)
-            if video_url:
-                print(f"策略2成功: {video_url}")
-                return self.create_play_result(video_url, 0)
+            # 策略2: 从JavaScript变量中提取
+            m3u8_url = self.extract_m3u8_from_scripts(data, html_content)
+            if m3u8_url and self.validate_m3u8_url(m3u8_url):
+                print(f"从脚本中提取到m3u8: {m3u8_url}")
+                return self.create_play_result(m3u8_url, 0)
             
-            # 策略3: 检查iframe中的播放器
-            video_url = self.extract_iframe_player(data)
-            if video_url:
-                print(f"策略3成功: {video_url}")
-                return self.create_play_result(video_url, 1)
+            # 策略3: 模拟播放器请求获取m3u8
+            m3u8_url = self.simulate_player_request(data, html_content, play_page_url)
+            if m3u8_url and self.validate_m3u8_url(m3u8_url):
+                print(f"模拟播放器请求获取到m3u8: {m3u8_url}")
+                return self.create_play_result(m3u8_url, 0)
             
-            # 策略4: 在HTML中搜索视频文件模式
-            video_url = self.search_video_patterns(html_content)
-            if video_url:
-                print(f"策略4成功: {video_url}")
-                return self.create_play_result(video_url, 0)
+            # 策略4: 尝试直接请求播放器API
+            m3u8_url = self.request_player_api(data, html_content, play_page_url)
+            if m3u8_url and self.validate_m3u8_url(m3u8_url):
+                print(f"从播放器API获取到m3u8: {m3u8_url}")
+                return self.create_play_result(m3u8_url, 0)
                 
-            # 所有策略失败，使用最终方案
-            print("所有策略失败，使用最终方案")
+            # 所有策略失败
+            print("所有嗅探策略失败，使用备用方案")
             return self.create_play_result(play_page_url, 1)
             
         except Exception as e:
             print(f"播放处理异常: {e}")
+            import traceback
+            traceback.print_exc()
             return self.create_play_result(play_page_url, 1)
 
-    def extract_real_video_url(self, data, html_content):
+    def find_m3u8_in_html(self, html_content):
         """
-        从JavaScript中提取真实的视频播放地址
+        在HTML内容中直接搜索m3u8链接
+        """
+        m3u8_urls = []
+        
+        # 搜索各种格式的m3u8链接
+        patterns = [
+            r'https?://[^\s"\']+\.m3u8[^\s"\']*',  # 标准m3u8链接
+            r'//[^\s"\']+\.m3u8[^\s"\']*',         # 协议相对m3u8链接
+            r'/[^\s"\']+\.m3u8[^\s"\']*',          # 绝对路径m3u8链接
+        ]
+        
+        for pattern in patterns:
+            matches = re.findall(pattern, html_content, re.IGNORECASE)
+            for match in matches:
+                # 标准化URL
+                if match.startswith('//'):
+                    url = 'https:' + match
+                elif match.startswith('/'):
+                    url = self.host + match
+                else:
+                    url = match
+                
+                if url not in m3u8_urls:
+                    m3u8_urls.append(url)
+        
+        return m3u8_urls
+
+    def extract_m3u8_from_scripts(self, data, html_content):
+        """
+        从JavaScript脚本中提取m3u8地址
         """
         try:
-            # 查找包含播放信息的脚本
+            # 查找所有脚本
             scripts = data('script')
             for script in scripts.items():
                 script_text = script.text()
                 
-                # 查找包含视频URL的JavaScript代码
-                if 'url' in script_text and ('m3u8' in script_text or 'mp4' in script_text):
-                    print(f"找到包含视频URL的脚本: {script_text[:200]}...")
-                    
-                    # 尝试多种提取模式
-                    url_patterns = [
-                        r'url\s*[:=]\s*["\']([^"\']+\.(m3u8|mp4)[^"\']*)["\']',
-                        r'player\.url\s*=\s*["\']([^"\']+\.(m3u8|mp4)[^"\']*)["\']',
-                        r'file\s*[:=]\s*["\']([^"\']+\.(m3u8|mp4)[^"\']*)["\']',
-                        r'src\s*[:=]\s*["\']([^"\']+\.(m3u8|mp4)[^"\']*)["\']',
-                        r'video_url\s*[:=]\s*["\']([^"\']+\.(m3u8|mp4)[^"\']*)["\']',
-                    ]
-                    
-                    for pattern in url_patterns:
-                        matches = re.findall(pattern, script_text, re.IGNORECASE)
-                        for match in matches:
-                            url = match[0] if isinstance(match, tuple) else match
-                            if url and self.is_valid_video_url(url):
-                                return self.normalize_url(url)
+                # 在脚本中搜索m3u8
+                m3u8_patterns = [
+                    r'url\s*[:=]\s*["\']([^"\']+\.m3u8[^"\']*)["\']',
+                    r'file\s*[:=]\s*["\']([^"\']+\.m3u8[^"\']*)["\']',
+                    r'src\s*[:=]\s*["\']([^"\']+\.m3u8[^"\']*)["\']',
+                    r'video_url\s*[:=]\s*["\']([^"\']+\.m3u8[^"\']*)["\']',
+                    r'["\'](https?://[^"\']+\.m3u8[^"\']*)["\']',
+                ]
+                
+                for pattern in m3u8_patterns:
+                    matches = re.findall(pattern, script_text, re.IGNORECASE)
+                    for match in matches:
+                        url = match
+                        if not url.startswith('http'):
+                            if url.startswith('//'):
+                                url = 'https:' + url
+                            else:
+                                url = self.host + url
+                        return url
             
-            # 查找JSON格式的播放信息
+            # 搜索JSON格式的播放信息
             json_patterns = [
                 r'var\s+player_data\s*=\s*({[^;]+});',
                 r'player_data\s*=\s*({[^;]+});',
@@ -353,113 +386,121 @@ class Spider(Spider):
                         json_str = re.sub(r',\s*]', ']', json_str)
                         
                         jsdata = json.loads(json_str)
-                        if 'url' in jsdata and jsdata['url']:
+                        if 'url' in jsdata and jsdata['url'] and '.m3u8' in jsdata['url']:
                             url = jsdata['url']
-                            if self.is_valid_video_url(url):
-                                return self.normalize_url(url)
+                            if not url.startswith('http'):
+                                if url.startswith('//'):
+                                    url = 'https:' + url
+                                else:
+                                    url = self.host + url
+                            return url
                     except:
                         continue
             
             return None
             
         except Exception as e:
-            print(f"提取真实视频URL失败: {e}")
+            print(f"脚本提取失败: {e}")
             return None
 
-    def extract_direct_video_url(self, data):
+    def simulate_player_request(self, data, html_content, play_page_url):
         """
-        提取直接视频标签中的URL
+        模拟播放器请求获取m3u8地址
         """
         try:
-            # 检查video标签
-            video_tags = data('video')
-            for video in video_tags.items():
-                src = video.attr('src')
-                if src and self.is_valid_video_url(src):
-                    return self.normalize_url(src)
+            # 查找可能的播放器配置
+            player_configs = self.find_player_configs(data, html_content)
             
-            # 检查source标签
-            source_tags = data('source')
-            for source in source_tags.items():
-                src = source.attr('src')
-                if src and self.is_valid_video_url(src):
-                    return self.normalize_url(src)
+            # 如果有播放器配置，尝试模拟请求
+            for config in player_configs:
+                m3u8_url = self.try_player_config(config, play_page_url)
+                if m3u8_url:
+                    return m3u8_url
             
             return None
             
         except Exception as e:
-            print(f"提取直接视频URL失败: {e}")
+            print(f"模拟播放器请求失败: {e}")
             return None
 
-    def extract_iframe_player(self, data):
+    def find_player_configs(self, data, html_content):
         """
-        提取iframe播放器地址
+        查找播放器配置信息
+        """
+        configs = []
+        
+        # 查找常见的播放器初始化代码
+        player_patterns = [
+            r'player\s*=\s*new\s+\w+Player\s*\(([^)]+)\)',
+            r'\$\(\s*["\']#\w+["\']\s*\)\.player\s*\(([^)]+)\)',
+            r'videojs\s*\([^)]*,\s*([^)]+)\)',
+        ]
+        
+        for pattern in player_patterns:
+            matches = re.findall(pattern, html_content, re.IGNORECASE)
+            for match in matches:
+                configs.append(match)
+        
+        return configs
+
+    def try_player_config(self, config, play_page_url):
+        """
+        尝试根据播放器配置获取m3u8地址
         """
         try:
-            iframes = data('iframe')
-            for iframe in iframes.items():
-                src = iframe.attr('src')
-                if src and src.startswith('http'):
-                    return self.normalize_url(src)
-            
+            # 这里可以根据具体的播放器配置发送请求
+            # 由于我们不知道具体的API格式，先返回None
             return None
-            
-        except Exception as e:
-            print(f"提取iframe播放器失败: {e}")
+        except:
             return None
 
-    def search_video_patterns(self, html_content):
+    def request_player_api(self, data, html_content, play_page_url):
         """
-        在HTML中搜索视频文件模式
+        尝试直接请求播放器API
         """
         try:
-            # 直接搜索视频文件URL
-            video_patterns = [
-                r'https?://[^\s"\']+\.(m3u8|mp4|flv)[^\s"\']*',
-                r'//[^\s"\']+\.(m3u8|mp4|flv)[^\s"\']*',
+            # 查找可能的API端点
+            api_patterns = [
+                r'https?://[^\s"\']+\.php[^\s"\']*',
+                r'https?://[^\s"\']+\.json[^\s"\']*',
+                r'https?://[^\s"\']+/api/[^\s"\']*',
             ]
             
-            for pattern in video_patterns:
+            for pattern in api_patterns:
                 matches = re.findall(pattern, html_content, re.IGNORECASE)
                 for match in matches:
-                    url = match if isinstance(match, str) else match[0]
-                    if self.is_valid_video_url(url):
-                        return self.normalize_url(url)
+                    if 'm3u8' in match or 'video' in match or 'play' in match:
+                        try:
+                            # 尝试请求这个API端点
+                            response = self.session.get(match, timeout=10)
+                            if response.status_code == 200:
+                                # 在响应中搜索m3u8
+                                m3u8_urls = self.find_m3u8_in_html(response.text)
+                                if m3u8_urls:
+                                    return m3u8_urls[0]
+                        except:
+                            continue
             
             return None
             
         except Exception as e:
-            print(f"搜索视频模式失败: {e}")
+            print(f"请求播放器API失败: {e}")
             return None
 
-    def is_valid_video_url(self, url):
+    def validate_m3u8_url(self, url):
         """
-        验证URL是否为有效的视频地址
+        验证m3u8 URL是否有效
         """
-        if not url:
+        if not url or '.m3u8' not in url:
             return False
-            
+        
         # 检查URL格式
-        if url.startswith('javascript:') or url.startswith('data:'):
+        if not (url.startswith('http://') or url.startswith('https://')):
             return False
-            
-        # 检查是否包含视频文件特征
-        video_indicators = ['.m3u8', '.mp4', '.flv', 'video', 'stream']
-        url_lower = url.lower()
         
-        return any(indicator in url_lower for indicator in video_indicators)
-
-    def normalize_url(self, url):
-        """
-        标准化URL
-        """
-        if not url.startswith('http'):
-            if url.startswith('//'):
-                url = 'https:' + url
-            else:
-                url = self.host + url
-        
-        return url
+        # 可以进一步验证，比如发送HEAD请求检查是否存在
+        # 但为了性能，我们暂时只做基本验证
+        return True
 
     def create_play_result(self, url, parse_type):
         """
