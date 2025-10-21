@@ -35,7 +35,7 @@ class Spider(Spider):
         }
         try:self.proxies = json.loads(extend)
         except:self.proxies = {}
-        # 保持作者的命名 self.hsot
+        # 保持作者的原始命名
         self.hsot=self.gethost()
         # self.hsot='https://hd.hdys2.com'
         self.headers.update({'referer': f"{self.hsot}/"})
@@ -100,7 +100,7 @@ class Spider(Spider):
         return result
 
     def detailContent(self, ids):
-        # 修正：获取所有播放线路和剧集信息
+        # 核心修改：修复播放列表格式，使其包含所有线路和剧集
         data=self.getpq(self.session.get(f"{self.hsot}{ids[0]}"))
         
         # 提取基础信息
@@ -110,28 +110,20 @@ class Spider(Spider):
         vod_actor = data('.detail-row:nth-child(3) .detail-content:nth-child(2) a').text()
         vod_content = data('.detail-row:nth-child(5) .detail-content:nth-child(2)').text().strip()
 
-        # 初始化播放信息列表
         vod_play_from = []
         vod_play_url = []
 
         # 解析播放线路和剧集列表
-        # .stui-player__detail:eq(0) 是包含所有线路和剧集的主容器
         play_area = data('.stui-player__detail:eq(0)')
-        
-        # 播放线路名称（Tab 名称）
         line_names = play_area.find('.stui-vodlist__head h3')
-        # 播放列表（ul 列表）
         play_lists = play_area.find('.stui-content__list')
 
         # 遍历所有线路
         for i, line_name_item in enumerate(line_names.items()):
-            # 线路名称
             line_flag = line_name_item.text()
             vod_play_from.append(line_flag)
             
-            # 对应的剧集列表
             episodes = []
-            # 通过索引找到当前线路的 ul 列表
             current_list = play_lists.eq(i).find('li a')
             
             for item in current_list.items():
@@ -162,23 +154,18 @@ class Spider(Spider):
         return {'list':self.getlist(data('.stui-vodlist.clearfix li')),'page':pg}
 
     def playerContent(self, flag, id, vipFlags):
-        # id 是 detailContent 传递来的具体剧集链接，例如：/vodplay/1-1-1.html
+        # 保持原始逻辑，但确保异常时回退正确
         try:
             data=self.getpq(self.session.get(f"{self.hsot}{id}"))
             jstr=data('.stui-player.col-pd script').eq(0).text()
-            # 提取 JSON 数据
             jsdata=json.loads(jstr.split("=", maxsplit=1)[-1].strip())
             p,url=0,jsdata['url']
-            
-            # 如果是 m3u8，则使用本地代理
             if '.m3u8' in url:
                 url=self.proxy(url,'m3u8')
-                
         except Exception as e:
             print(f"播放链接解析失败: {str(e)}")
             # 播放失败时，返回 p=1 (让宿主App尝试使用外部解析器)
             p,url=1,f"{self.hsot}{id}"
-            
         return  {'parse': p, 'url': url, 'header': self.pheader}
 
     def liveContent(self, url):
@@ -270,7 +257,6 @@ class Spider(Spider):
         for index, string in enumerate(lines):
             if '#EXT' not in string:
                 if 'http' not in string:
-                    # 修正相对路径
                     domain = durl if string.startswith('/') else last_r
                     string = domain + ('' if string.startswith('/') else '/') + string
                 lines[index] = self.proxy(string, string.split('.')[-1].split('?')[0])
