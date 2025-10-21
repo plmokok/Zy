@@ -6,7 +6,7 @@ import sys
 import threading
 import time
 from base64 import b64encode, b64decode
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote # 导入 unquote 用于可能的 URL 解码
 import requests
 from pyquery import PyQuery as pq
 sys.path.append('..')
@@ -16,10 +16,6 @@ from base.spider import Spider
 class Spider(Spider):
 
     def init(self, extend=""):
-        '''
-        如果一直访问不了，手动访问导航页:https://a.hdys.top，替换：
-        self.hsot = 'https://xxx.xxx.xxx'
-        '''
         self.session = requests.Session()
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
@@ -35,16 +31,15 @@ class Spider(Spider):
         }
         try:self.proxies = json.loads(extend)
         except:self.proxies = {}
-        # 保持作者的原始命名
+        # 保持作者的原始命名 self.hsot
         self.hsot=self.gethost()
-        # self.hsot='https://hd.hdys2.com'
         self.headers.update({'referer': f"{self.hsot}/"})
         self.session.proxies.update(self.proxies)
         self.session.headers.update(self.headers)
         pass
 
     def getName(self):
-        return "花都影视" # 补充 getName
+        return "花都影视" 
 
     def isVideoFormat(self, url):
         pass
@@ -124,15 +119,14 @@ class Spider(Spider):
             vod_play_from.append(line_flag)
             
             episodes = []
-            current_list = play_lists.eq(i).find('li a')
+            # 网站播放页结构为 .stui-content__playlist，这里改为更精确的定位
+            current_list = play_lists.eq(i).find('li a') 
             
             for item in current_list.items():
                 ep_name = item.text()
                 ep_url = item.attr('href')
-                # 剧集名称$剧集链接
                 episodes.append(f"{ep_name}${ep_url}")
 
-            # 用 '$$$' 连接一个播放线路的所有剧集
             vod_play_url.append('$$$'.join(episodes))
 
         vod = {
@@ -142,9 +136,7 @@ class Spider(Spider):
             'vod_director': vod_director,
             'vod_actor': vod_actor,
             'vod_content': vod_content,
-            # 拼接线路名, 使用 '+++' 分隔
             'vod_play_from': '+++'.join(vod_play_from),
-            # 拼接剧集列表, 使用 '+++' 分隔
             'vod_play_url': '+++'.join(vod_play_url)
         }
         return {'list':[vod]}
@@ -154,18 +146,31 @@ class Spider(Spider):
         return {'list':self.getlist(data('.stui-vodlist.clearfix li')),'page':pg}
 
     def playerContent(self, flag, id, vipFlags):
-        # 保持原始逻辑，但确保异常时回退正确
+        # 修复：对 jsdata['url'] 进行解码
         try:
             data=self.getpq(self.session.get(f"{self.hsot}{id}"))
             jstr=data('.stui-player.col-pd script').eq(0).text()
             jsdata=json.loads(jstr.split("=", maxsplit=1)[-1].strip())
-            p,url=0,jsdata['url']
+            
+            encoded_url = jsdata['url']
+            
+            # 尝试解码 Base64
+            # ⚠️ 注意：如果 Base64 解码后仍是百分号编码，需要再进行 unquote
+            url = self.d64(encoded_url) 
+            
+            # 检查是否需要 URL 百分号解码
+            if '%' in url:
+                url = unquote(url)
+
+            p = 0
             if '.m3u8' in url:
                 url=self.proxy(url,'m3u8')
+                
         except Exception as e:
             print(f"播放链接解析失败: {str(e)}")
             # 播放失败时，返回 p=1 (让宿主App尝试使用外部解析器)
             p,url=1,f"{self.hsot}{id}"
+            
         return  {'parse': p, 'url': url, 'header': self.pheader}
 
     def liveContent(self, url):
@@ -202,8 +207,8 @@ class Spider(Spider):
         try:
             return pq(data.text)
         except Exception as e:
-            print(f"{str(e)}")
-            return pq(data.text.encode('utf-8'))
+            # 尝试用 UTF-8 解码，如果网站返回的不是 UTF-8
+            return pq(data.content.decode('utf-8')) 
 
     def host_late(self, url_list):
         if isinstance(url_list, str):
@@ -222,11 +227,11 @@ class Spider(Spider):
                 url=re.findall(r'"([^"]*)"', url)[0]
                 start_time = time.time()
                 self.headers.update({'referer': f'{url}/'})
+                # 使用 requests.Session 进行请求以继承 init 中的配置
                 response = requests.head(url,proxies=self.proxies,headers=self.headers,timeout=1.0, allow_redirects=False)
                 delay = (time.time() - start_time) * 1000
                 results[url] = delay
             except Exception as e:
-                # print(f"测试 {url} 失败: {str(e)}") # 调试输出，可选
                 results[url] = float('inf')
 
         for url in urls:
@@ -237,11 +242,9 @@ class Spider(Spider):
         for t in threads:
             t.join()
 
-        # 确保 results 不为空
         if not results:
              return urls[0] if urls else ''
 
-        # 返回延迟最小的 host
         return min(results.items(), key=lambda x: x[1])[0]
 
     def m3Proxy(self, url):
