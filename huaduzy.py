@@ -42,39 +42,48 @@ class Spider(Spider):
     def getName(self):
         pass
 
-    # ... (其他方法保持不变)
+    def isVideoFormat(self, url):
+        pass
 
+    def manualVideoCheck(self):
+        pass
+
+    def destroy(self):
+        pass
+
+    # **保持原始 pheader 结构不变，但移除可能错误的 origin/referer 字段**
+    # **这些字段将在播放时动态添加**
     pheader={
         'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
         'sec-ch-ua-platform': '"Android"',
         'sec-ch-ua': '"Not/A)Brand";v="8", "Chromium";v="130", "Google Chrome";v="130"',
         'dnt': '1',
         'sec-ch-ua-mobile': '?1',
-        # 'origin': 'https://jx.8852.top', # 移除硬编码，在 playerContent 中动态添加
+        # 'origin': 'https://jx.8852.top', # <-- 移除这个硬编码可能错误的字段
         'sec-fetch-site': 'cross-site',
         'sec-fetch-mode': 'cors',
         'sec-fetch-dest': 'empty',
         'accept-language': 'zh-CN,zh;q=0.9',
         'priority': 'u=1, i',
-        # 'referer': '' # 移除硬编码，在 playerContent 中动态添加
     }
-    
+
     # 辅助函数：根据URL生成播放请求头，避免重复代码
     def get_pheader_for_url(self, url):
-        pheader = self.pheader.copy()
+        # 修复点 1：复制 pheader 作为基础
+        pheader = self.pheader.copy() 
         try:
             parsed = urlparse(url)
             referer_url = f"{parsed.scheme}://{parsed.netloc}/"
+            # 修复点 2：动态设置 referer 和 origin
             pheader['referer'] = referer_url
             pheader['origin'] = referer_url.strip('/')
         except:
             pass
         return pheader
-    
+
     # ... (homeContent, categoryContent, detailContent, searchContent 保持不变)
 
     def playerContent(self, flag, id, vipFlags):
-        # 修复点 1：获取动态的播放请求头
         p,url=0,''
         header = {} # 初始化 header
         try:
@@ -96,7 +105,7 @@ class Spider(Spider):
             print(f"{str(e)}")
             p,url=1,f"{self.hsot}{id}"
             
-        # 修复点 2：返回动态生成的 header
+        # 修复点 3：返回动态生成的 header
         return  {'parse': p, 'url': url, 'header': header}
 
     def liveContent(self, url):
@@ -112,7 +121,7 @@ class Spider(Spider):
     # ... (gethost, getlist, getpq, host_late 保持不变)
 
     def m3Proxy(self, url):
-        # 修复点 3：M3U8 请求使用动态 header
+        # 修复点 4：M3U8 请求使用动态 header
         pheader = self.get_pheader_for_url(url)
         
         ydata = requests.get(url, headers=pheader, proxies=self.proxies, allow_redirects=False)
@@ -127,12 +136,13 @@ class Spider(Spider):
         parsed_url = urlparse(url)
         durl = parsed_url.scheme + "://" + parsed_url.netloc
         
-        # 修复点 4：M3U8 切片链接拼接使用 urljoin 提高准确性
+        # 修复点 5：M3U8 切片链接拼接使用 urljoin 提高准确性
         for index, string in enumerate(lines):
             string = string.strip() # 清理空白
             if '#EXT' not in string and string:
                 if 'http' not in string:
                     # 使用 urljoin 替代原始的条件判断和字符串拼接
+                    # urljoin 更加健壮和可靠
                     string = urljoin(last_r + '/', string) 
                     
                 # 重新封装切片链接
@@ -142,11 +152,10 @@ class Spider(Spider):
         return [200, "application/vnd.apple.mpegurl", data] # 更改 Content-Type
 
     def tsProxy(self, url,type):
-        # 修复点 5：TS/MP4/图片 请求使用动态 header
+        # 修复点 6：TS/MP4/图片 请求使用动态 header
         h=self.get_pheader_for_url(url)
         if type=='img':
-            h=self.headers.copy()
-            h.update({'referer': urlparse(url).scheme + '://' + urlparse(url).netloc + '/'}) # 尝试给图片一个 Referer
+            h=self.headers.copy() # 图片使用初始头
             
         data = requests.get(url, headers=h, proxies=self.proxies, stream=True)
         
@@ -156,5 +165,5 @@ class Spider(Spider):
             return [data.status_code, "text/plain", f"Proxy failed for {url}"]
             
         return [200, data.headers['Content-Type'], data.content]
-
-    # ... (proxy, e64, d64 保持不变)
+    
+    # ... (proxy, e64, d64, host_late 等其他方法保持不变)
