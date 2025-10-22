@@ -17,7 +17,7 @@ class Spider(Spider):
 
     def init(self, extend=""):
         '''
-        修复：添加备用Host以应对 gethost 失败
+        完全保持原版初始化
         '''
         self.session = requests.Session()
         self.headers = {
@@ -34,17 +34,8 @@ class Spider(Spider):
         }
         try:self.proxies = json.loads(extend)
         except:self.proxies = {}
-        
-        # ！！！关键修复点 1：设置一个最新的备用 Host ！！！
-        # 请替换为当前您在浏览器中测试有效的花都影视域名
-        fallback_host = 'https://hd8.huaduzy.com' # <--- **请替换此处的域名**
-        
-        try:
-            self.hsot=self.gethost()
-        except:
-            print("警告：动态获取Host失败，使用硬编码备用Host。")
-            self.hsot = fallback_host
-            
+        self.hsot=self.gethost()
+        # self.hsot='https://hd.hdys2.com'
         self.headers.update({'referer': f"{self.hsot}/"})
         self.session.proxies.update(self.proxies)
         self.session.headers.update(self.headers)
@@ -121,43 +112,41 @@ class Spider(Spider):
 
     def playerContent(self, flag, id, vipFlags):
         """
-        播放内容获取 - 修复 Header 传递版本（基于原始代码）
-        保留代理逻辑。强制使用 self.headers 并在其中注入正确的 Referer。
+        播放内容获取 - 最小修改版本
+        只修复播放地址解析问题，其他保持原样
         """
-        p = 0
-        url = f"{self.hsot}{id}" # 默认值
-        play_page_url = f"{self.hsot}{id}" # 播放页 URL
-
         try:
             # 获取播放页面
+            play_page_url = f"{self.hsot}{id}"
             response = self.session.get(play_page_url)
             data = self.getpq(response)
             
             # 提取脚本内容
             jstr = data('.stui-player.col-pd script').eq(0).text()
             
-            # 解析player_data (保持双重解码逻辑)
+            # 解析player_data
             player_data_match = re.search(r'player_data\s*=\s*({[^;]+});', jstr)
             if player_data_match:
                 player_data = json.loads(player_data_match.group(1))
                 
+                # 获取加密URL
                 encrypted_url = player_data.get('url', '')
                 if encrypted_url:
                     # 双重URL解码
                     video_url = unquote(unquote(encrypted_url))
                     p, url = 0, video_url
                     
-                    # 如果是m3u8文件，启用代理 (保持原始逻辑)
+                    # 如果是m3u8文件，启用代理
                     if '.m3u8' in url:
                         url = self.proxy(url, 'm3u8')
                 else:
-                    # 使用原版逻辑
+                    # 如果没有提取到URL，使用原版逻辑
                     jsdata = json.loads(jstr.split("=", maxsplit=1)[-1])
                     p, url = 0, jsdata['url']
                     if '.m3u8' in url:
                         url = self.proxy(url, 'm3u8')
             else:
-                # 使用原版逻辑
+                # 如果没有找到player_data，使用原版逻辑
                 jsdata = json.loads(jstr.split("=", maxsplit=1)[-1])
                 p, url = 0, jsdata['url']
                 if '.m3u8' in url:
@@ -166,14 +155,8 @@ class Spider(Spider):
         except Exception as e:
             print(f"{str(e)}")
             p, url = 1, f"{self.hsot}{id}"
-
-        # ！！！关键修复：强制设置 Referer ！！！
-        # 1. 复制 self.headers (最完整的 Headers) 作为基础
-        play_headers = self.headers.copy()
-        # 2. 覆盖 Referer 为视频播放页面的 URL
-        play_headers['referer'] = play_page_url 
-
-        return {'parse': p, 'url': url, 'header': play_headers}
+            
+        return {'parse': p, 'url': url, 'header': self.pheader}
 
     def liveContent(self, url):
         pass
@@ -181,8 +164,6 @@ class Spider(Spider):
     def localProxy(self, param):
         url = self.d64(param['url'])
         if param.get('type') == 'm3u8':
-            # ！！！注意：m3Proxy 和 tsProxy 内部使用的 Header 仍是 self.pheader
-            # 这是原始代码的潜在 BUG，我们无法从这里修复，但 TVBox 可能会忽略本地代理的 Header。
             return self.m3Proxy(url)
         else:
             return self.tsProxy(url,param['type'])
@@ -191,8 +172,7 @@ class Spider(Spider):
         params = {
             'v': '1',
         }
-        # ！！！关键修复点 2：gethost 请求时使用 HTTPS Referer ！！！
-        self.headers.update({'referer': 'https://a.hdys.top/'}) 
+        self.headers.update({'referer': 'https://a.hdys.top/'})
         response = self.session.get('https://a.hdys.top/assets/js/config.js',proxies=self.proxies, params=params, headers=self.headers)
         return self.host_late(response.text.split(';')[:-4])
 
