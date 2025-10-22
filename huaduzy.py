@@ -113,8 +113,8 @@ class Spider(Spider):
 
     def playerContent(self, flag, id, vipFlags):
         """
-        播放内容获取 - 修复 Header 传递版本
-        保留代理逻辑，但修复 Referer 校验问题。
+        播放内容获取 - 修复 Header 传递版本（基于原始代码）
+        保留代理逻辑。强制使用 self.headers 并在其中注入正确的 Referer。
         """
         p = 0
         url = f"{self.hsot}{id}" # 默认值
@@ -160,10 +160,15 @@ class Spider(Spider):
             p, url = 1, f"{self.hsot}{id}"
 
         # ！！！关键修复：强制设置 Referer ！！！
-        # 复制 pheader 并注入正确的 Referer，该 Referer 会传递给本地代理
-        play_headers = self.pheader.copy()
-        play_headers['referer'] = play_page_url # 播放页URL作为Referer
-            
+        # 1. 复制 self.headers (最完整的 Headers) 作为基础
+        play_headers = self.headers.copy()
+        # 2. 覆盖 Referer 为视频播放页面的 URL
+        play_headers['referer'] = play_page_url 
+        
+        # 3. 移除不必要的字段，只保留 User-Agent 和 Referer（有时更少字段更不容易出错）
+        # 这一步是可选项，如果上面的尝试失败，可以尝试只保留关键字段：
+        # play_headers = {'User-Agent': play_headers['User-Agent'], 'Referer': play_page_url}
+
         return {'parse': p, 'url': url, 'header': play_headers}
 
     def liveContent(self, url):
@@ -172,6 +177,8 @@ class Spider(Spider):
     def localProxy(self, param):
         url = self.d64(param['url'])
         if param.get('type') == 'm3u8':
+            # ！！！注意：m3Proxy 和 tsProxy 内部使用的 Header 仍是 self.pheader
+            # 这与 playerContent 返回给 TVBox 的 Header 不一致，是潜在的 BUG
             return self.m3Proxy(url)
         else:
             return self.tsProxy(url,param['type'])
