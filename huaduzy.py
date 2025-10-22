@@ -6,7 +6,7 @@ import sys
 import threading
 import time
 from base64 import b64encode, b64decode
-from urllib.parse import urlparse, unquote
+from urllib.parse import urlparse
 import requests
 from pyquery import PyQuery as pq
 sys.path.append('..')
@@ -116,12 +116,7 @@ class Spider(Spider):
             data=self.getpq(self.session.get(f"{self.hsot}{id}"))
             jstr=data('.stui-player.col-pd script').eq(0).text()
             jsdata=json.loads(jstr.split("=", maxsplit=1)[-1])
-            
-            # 关键修改：双重URL解码
-            encrypted_url = jsdata['url']
-            video_url = unquote(unquote(encrypted_url))
-            
-            p,url=0,video_url
+            p,url=0,jsdata['url']
             if '.m3u8' in url:url=self.proxy(url,'m3u8')
         except Exception as e:
             print(f"{str(e)}")
