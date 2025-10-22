@@ -1,238 +1,49 @@
 # -*- coding: utf-8 -*-
-# 目标：解决 TVBox 环境下的兼容性问题，采用最保守的初始化策略。
-
+# by @嗷呜
 import json
 import re
 import sys
-from base64 import b64decode
-from urllib.parse import unquote 
+import threading
+import time
+from base64 import b64encode, b64decode
+from urllib.parse import urlparse, unquote
 import requests
 from pyquery import PyQuery as pq
-
 sys.path.append('..')
-from base.spider import Spider 
+from base.spider import Spider
 
 
 class Spider(Spider):
 
-    # --- 核心配置 ---
-    FIXED_HOST = "https://hd8.huaduzy.vip" 
-    COMMON_USER_AGENT = 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
-    
-    # 保持 self.session 和 self.headers 的初始化，但只在 TVBox 期待时使用
-    session = None
-    headers = {}
-    proxies = {}
-    pheader = {}
-
-
     def init(self, extend=""):
-        """ TVBox 兼容性优先：只设置通用参数，不触碰 session 状态。 """
-        
-        # 1. 初始化头部
+        '''
+        如果一直访问不了，手动访问导航页:https://a.hdys.top，替换：
+        self.host = 'https://xxx.xxx.xxx'
+        '''
+        self.session = requests.Session()
         self.headers = {
-            'User-Agent': self.COMMON_USER_AGENT,
-            'Referer': self.FIXED_HOST + '/', 
-            'Accept-Language': 'zh-CN,zh;q=0.9',
-            'Accept': '*/*',
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+            'sec-ch-ua-platform': '"Android"',
+            'sec-ch-ua': '"Not/A)Brand";v="8", "Chromium";v="130", "Google Chrome";v="130"',
+            'dnt': '1',
+            'sec-ch-ua-mobile': '?1',
+            'sec-fetch-site': 'same-origin',
+            'sec-fetch-mode': 'no-cors',
+            'sec-fetch-dest': 'script',
+            'accept-language': 'zh-CN,zh;q=0.9',
+            'priority': 'u=2',
         }
-        
-        # 2. 处理代理配置
-        try:
-            self.proxies = json.loads(extend)
-        except:
-            self.proxies = {}
-        
-        # 3. 播放器专用的 header
-        self.pheader = self.headers.copy()
-        self.pheader.update({
-            'Referer': self.FIXED_HOST,
-            'Origin': self.FIXED_HOST
-        })
-        
-        # 4. **关键：不在这里创建 requests.Session()**，避免覆盖或冲突
-        # 如果 TVBox 在基类中创建了 self.session，我们不应该在这里重新创建它。
-        # 如果它没有创建，我们将在 getpq 中使用原始 requests 库。
-
-
-    def getName(self):
-        return "花都影视（TVBox 兼容）"
-
-    # --- 辅助函数：使用原始 requests ---
-
-    def getpq(self, url, method='GET', data=None):
-        """ 使用原始 requests.get/post 发送请求 """
-        # 使用独立的 headers 副本，确保没有副作用
-        request_headers = self.headers.copy()
-        
-        try:
-            # 强制使用 requests.get，绕开任何可能被污染的 self.session
-            if method == 'GET':
-                response = requests.get(
-                    url, 
-                    headers=request_headers, 
-                    proxies=self.proxies, 
-                    timeout=15, 
-                    verify=False, # **TVBox兼容：可能需要禁用SSL验证**
-                    allow_redirects=True
-                )
-            else:
-                response = requests.post(
-                    url, 
-                    headers=request_headers, 
-                    proxies=self.proxies, 
-                    data=data, 
-                    timeout=15, 
-                    verify=False, # **TVBox兼容：可能需要禁用SSL验证**
-                    allow_redirects=True
-                )
-                
-            response.raise_for_status() 
-            
-            # 安全解析内容
-            encoding = response.apparent_encoding if response.apparent_encoding != 'ascii' else 'utf-8'
-            return pq(response.content.decode(encoding, errors='ignore'))
-            
-        except requests.exceptions.RequestException as e:
-            print(f"请求 {url} 失败: {str(e)}")
-            return pq('<html></html>')
-
-    def decode_url(self, encoded_text):
-        """ 增强的解码器：Base64 解码，然后 URL 解码 """
-        try:
-            decoded_b64 = b64decode(encoded_text.encode('utf-8')).decode('utf-8')
-            final_url = unquote(decoded_b64)
-            return final_url
-        except Exception:
-            return encoded_text
-
-    # --- 功能函数（保持简洁，使用 getpq） ---
-    
-    def homeContent(self, filter):
-        data = self.getpq(self.FIXED_HOST)
-        
-        if not data('body'): 
-            return {'class': [], 'list': []}
-
-        cdata = data('.stui-header__menu.type-slide li')
-        ldata = data('.stui-vodlist.clearfix li')
-        
-        classes = []
-        for k in cdata.items():
-            i = k('a').attr('href')
-            if i and 'type' in i:
-                classes.append({
-                    'type_name': k.text(),
-                    'type_id': re.search(r'\d+', i).group(0)
-                })
-        
-        return {'class': classes, 'list': self._parse_vod_list(ldata)}
-
-    def categoryContent(self, tid, pg, filter, extend):
-        url = f"{self.FIXED_HOST}/vodshow/{tid}--------{pg}---.html"
-        data = self.getpq(url)
-        
-        list_items = self._parse_vod_list(data('.stui-vodlist.clearfix li'))
-
-        return {
-            'list': list_items,
-            'page': pg,
-            'pagecount': 9999,
-            'limit': 90,
-            'total': 999999
-        }
-
-    def detailContent(self, ids):
-        url = f"{self.FIXED_HOST}{ids[0]}"
-        data = self.getpq(url)
-        
-        vod_name = data('.stui-content__detail .title').text()
-        vod_pic = data('.stui-content__thumb a img').attr('data-original')
-        
-        vod_play_from = []
-        vod_play_url = []
-
-        playlist_pannels = data('.stui-pannel-box.b.playlist .stui-pannel_bd')
-        for i, pannel in enumerate(playlist_pannels.items()):
-            line_name = f"线路{i+1}"
-            episodes = []
-            for item in pannel.find('li a').items():
-                ep_name = item.text()
-                ep_url = item.attr('href')
-                episodes.append(f"{ep_name}${ep_url}")
-
-            if episodes:
-                vod_play_from.append(line_name)
-                vod_play_url.append('$$$'.join(episodes))
-
-        vod = {
-            'vod_id': ids[0],
-            'vod_name': vod_name,
-            'vod_pic': vod_pic,
-            'vod_director': data('.detail-row:nth-child(2) .detail-content:nth-child(2)').text().strip(),
-            'vod_actor': data('.detail-row:nth-child(3) .detail-content:nth-child(2)').text().strip(),
-            'vod_content': data('.stui-content__detail .detail-row:last-child').text().strip(),
-            'vod_play_from': '+++'.join(vod_play_from),
-            'vod_play_url': '+++'.join(vod_play_url)
-        }
-        return {'list': [vod]}
-
-    def playerContent(self, flag, id, vipFlags):
-        video_url = f"{self.FIXED_HOST}{id}"
-        
-        try:
-            data = self.getpq(video_url)
-            
-            script_text = data('.stui-player.col-pd script').eq(0).text()
-            match = re.search(r'player_data\s*=\s*({.*?})\s*;', script_text, re.DOTALL)
-            
-            if not match:
-                return {'parse': 1, 'url': video_url, 'header': self.pheader}
-
-            jsdata = json.loads(match.group(1))
-            encoded_url = jsdata.get('url')
-            
-            if not encoded_url:
-                return {'parse': 1, 'url': video_url, 'header': self.pheader}
-
-            final_url = self.decode_url(encoded_url)
-            
-            return {'parse': 0, 'url': final_url, 'header': self.pheader}
-
-        except Exception as e:
-            print(f"播放链接解析失败: {str(e)}")
-            return {'parse': 1, 'url': video_url, 'header': self.pheader}
-
-
-    # --- 内部辅助函数（保持不变） ---
-    
-    def _parse_vod_list(self, data):
-        videos=[]
-        for i in data.items():
-            videos.append({
-                'vod_id': i('a').attr('href'),
-                'vod_name': i('img').attr('alt'),
-                'vod_pic': i('img').attr('data-original'),
-                'vod_year': i('.pic-tag-t').text(),
-                'vod_remarks': i('.pic-tag-b').text()
-            })
-        return videos
-
-    # --- 其他兼容函数（保持不变） ---
-
-    def searchContent(self, key, quick, pg="1"):
-        url = f"{self.FIXED_HOST}/vodsearch/{key}----------{pg}---.html"
-        data = self.getpq(url)
-        return {'list': self._parse_vod_list(data('.stui-vodlist.clearfix li')), 'page': pg}
-
-    def homeVideoContent(self):
-        return {'list':''}
-
-    def liveContent(self, url):
+        try:self.proxies = json.loads(extend)
+        except:self.proxies = {}
+        self.hsot=self.gethost()
+        # self.hsot='https://hd.hdys2.com'
+        self.headers.update({'referer': f"{self.hsot}/"})
+        self.session.proxies.update(self.proxies)
+        self.session.headers.update(self.headers)
         pass
 
-    def localProxy(self, param):
-        return [500, "text/plain", "Local proxy not implemented"]
+    def getName(self):
+        pass
 
     def isVideoFormat(self, url):
         pass
@@ -242,3 +53,198 @@ class Spider(Spider):
 
     def destroy(self):
         pass
+
+    pheader={
+        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
+        'sec-ch-ua-platform': '"Android"',
+        'sec-ch-ua': '"Not/A)Brand";v="8", "Chromium";v="130", "Google Chrome";v="130"',
+        'dnt': '1',
+        'sec-ch-ua-mobile': '?1',
+        'origin': 'https://jx.8852.top',
+        'sec-fetch-site': 'cross-site',
+        'sec-fetch-mode': 'cors',
+        'sec-fetch-dest': 'empty',
+        'accept-language': 'zh-CN,zh;q=0.9',
+        'priority': 'u=1, i',
+    }
+
+    def homeContent(self, filter):
+        data=self.getpq(self.session.get(self.hsot))
+        cdata=data('.stui-header__menu.type-slide li')
+        ldata=data('.stui-vodlist.clearfix li')
+        result = {}
+        classes = []
+        for k in cdata.items():
+            i=k('a').attr('href')
+            if i and 'type' in i:
+                classes.append({
+                    'type_name': k.text(),
+                    'type_id': re.search(r'\d+', i).group(0)
+                })
+        result['class'] = classes
+        result['list'] = self.getlist(ldata)
+        return result
+
+    def homeVideoContent(self):
+        return {'list':''}
+
+    def categoryContent(self, tid, pg, filter, extend):
+        data=self.getpq(self.session.get(f"{self.hsot}/vodshow/{tid}--------{pg}---.html"))
+        result = {}
+        result['list'] = self.getlist(data('.stui-vodlist.clearfix li'))
+        result['page'] = pg
+        result['pagecount'] = 9999
+        result['limit'] = 90
+        result['total'] = 999999
+        return result
+
+    def detailContent(self, ids):
+        data=self.getpq(self.session.get(f"{self.hsot}{ids[0]}"))
+        v=data('.stui-vodlist__box a')
+        vod = {
+            'vod_play_from': '花都影视',
+            'vod_play_url': f"{v('img').attr('alt')}${v.attr('href')}"
+        }
+        return {'list':[vod]}
+
+    def searchContent(self, key, quick, pg="1"):
+        data=self.getpq(self.session.get(f"{self.hsot}/vodsearch/{key}----------{pg}---.html"))
+        return {'list':self.getlist(data('.stui-vodlist.clearfix li')),'page':pg}
+
+    def playerContent(self, flag, id, vipFlags):
+        """
+        播放内容获取 - 最小修改版本
+        只修改这一行：在提取URL后立即进行双重解码
+        """
+        try:
+            data=self.getpq(self.session.get(f"{self.hsot}{id}"))
+            jstr=data('.stui-player.col-pd script').eq(0).text()
+            jsdata=json.loads(jstr.split("=", maxsplit=1)[-1])
+            
+            # 唯一修改：对提取的URL进行双重解码
+            encrypted_url = jsdata['url']
+            video_url = unquote(unquote(encrypted_url))
+            
+            p,url=0,video_url
+            if '.m3u8' in url:url=self.proxy(url,'m3u8')
+        except Exception as e:
+            print(f"{str(e)}")
+            p,url=1,f"{self.hsot}{id}"
+        return  {'parse': p, 'url': url, 'header': self.pheader}
+
+    def liveContent(self, url):
+        pass
+
+    def localProxy(self, param):
+        url = self.d64(param['url'])
+        if param.get('type') == 'm3u8':
+            return self.m3Proxy(url)
+        else:
+            return self.tsProxy(url,param['type'])
+
+    def gethost(self):
+        params = {
+            'v': '1',
+        }
+        self.headers.update({'referer': 'https://a.hdys.top/'})
+        response = self.session.get('https://a.hdys.top/assets/js/config.js',proxies=self.proxies, params=params, headers=self.headers)
+        return self.host_late(response.text.split(';')[:-4])
+
+    def getlist(self,data):
+        videos=[]
+        for i in data.items():
+            videos.append({
+                'vod_id': i('a').attr('href'),
+                'vod_name': i('img').attr('alt'),
+                'vod_pic': self.proxy(i('img').attr('data-original')),
+                'vod_year': i('.pic-tag-t').text(),
+                'vod_remarks': i('.pic-tag-b').text()
+            })
+        return videos
+
+    def getpq(self, data):
+        try:
+            return pq(data.text)
+        except Exception as e:
+            print(f"{str(e)}")
+            return pq(data.text.encode('utf-8'))
+
+    def host_late(self, url_list):
+        if isinstance(url_list, str):
+            urls = [u.strip() for u in url_list.split(',')]
+        else:
+            urls = url_list
+
+        if len(urls) <= 1:
+            return urls[0] if urls else ''
+
+        results = {}
+        threads = []
+
+        def test_host(url):
+            try:
+                url=re.findall(r'"([^"]*)"', url)[0]
+                start_time = time.time()
+                self.headers.update({'referer': f'{url}/'})
+                response = requests.head(url,proxies=self.proxies,headers=self.headers,timeout=1.0, allow_redirects=False)
+                delay = (time.time() - start_time) * 1000
+                results[url] = delay
+            except Exception as e:
+                results[url] = float('inf')
+
+        for url in urls:
+            t = threading.Thread(target=test_host, args=(url,))
+            threads.append(t)
+            t.start()
+
+        for t in threads:
+            t.join()
+
+        return min(results.items(), key=lambda x: x[1])[0]
+
+    def m3Proxy(self, url):
+        ydata = requests.get(url, headers=self.pheader, proxies=self.proxies, allow_redirects=False)
+        data = ydata.content.decode('utf-8')
+        if ydata.headers.get('Location'):
+            url = ydata.headers['Location']
+            data = requests.get(url, headers=self.pheader, proxies=self.proxies).content.decode('utf-8')
+        lines = data.strip().split('\n')
+        last_r = url[:url.rfind('/')]
+        parsed_url = urlparse(url)
+        durl = parsed_url.scheme + "://" + parsed_url.netloc
+        for index, string in enumerate(lines):
+            if '#EXT' not in string:
+                if 'http' not in string:
+                    domain=last_r if string.count('/') < 2 else durl
+                    string = domain + ('' if string.startswith('/') else '/') + string
+                lines[index] = self.proxy(string, string.split('.')[-1].split('?')[0])
+        data = '\n'.join(lines)
+        return [200, "application/vnd.apple.mpegur", data]
+
+    def tsProxy(self, url,type):
+        h=self.pheader.copy()
+        if type=='img':h=self.headers.copy()
+        data = requests.get(url, headers=h, proxies=self.proxies, stream=True)
+        return [200, data.headers['Content-Type'], data.content]
+
+    def proxy(self, data, type='img'):
+        if data and len(self.proxies):return f"{self.getProxyUrl()}&url={self.e64(data)}&type={type}"
+        else:return data
+
+    def e64(self, text):
+        try:
+            text_bytes = text.encode('utf-8')
+            encoded_bytes = b64encode(text_bytes)
+            return encoded_bytes.decode('utf-8')
+        except Exception as e:
+            print(f"Base64编码错误: {str(e)}")
+            return ""
+
+    def d64(self,encoded_text):
+        try:
+            encoded_bytes = encoded_text.encode('utf-8')
+            decoded_bytes = b64decode(encoded_bytes)
+            return decoded_bytes.decode('utf-8')
+        except Exception as e:
+            print(f"Base64解码错误: {str(e)}")
+            return ""
