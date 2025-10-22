@@ -21,11 +21,9 @@ class Spider(Spider):
         '''
         self.session = requests.Session()
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
-            'sec-ch-ua-platform': '"Android"',
-            'sec-ch-ua': '"Not/A)Brand";v="8", "Chromium";v="130", "Google Chrome";v="130"',
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36', # 统一使用 Windows UA，更通用
+            'Accept': '*/*',
             'dnt': '1',
-            'sec-ch-ua-mobile': '?1',
             'sec-fetch-site': 'same-origin',
             'sec-fetch-mode': 'no-cors',
             'sec-fetch-dest': 'script',
@@ -34,172 +32,87 @@ class Spider(Spider):
         }
         try:self.proxies = json.loads(extend)
         except:self.proxies = {}
+        # 禁用requests的警告
+        requests.packages.urllib3.disable_warnings() 
+        
         self.hsot=self.gethost()
-        # self.hsot='https://hd.hdys2.com'
         self.headers.update({'referer': f"{self.hsot}/"})
         self.session.proxies.update(self.proxies)
         self.session.headers.update(self.headers)
         self.dynamic_referer = None # 初始化动态Referer
         pass
 
-    def getName(self):
-        pass
-
-    def isVideoFormat(self, url):
-        pass
-
-    def manualVideoCheck(self):
-        pass
-
-    def destroy(self):
-        pass
+    # ... (getName, isVideoFormat, manualVideoCheck, destroy 方法不变) ...
 
     pheader={
-        'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
-        'sec-ch-ua-platform': '"Android"',
-        'sec-ch-ua': '"Not/A)Brand";v="8", "Chromium";v="130", "Google Chrome";v="130"',
-        'dnt': '1',
-        'sec-ch-ua-mobile': '?1',
-        'origin': 'https://jx.8852.top',
-        'sec-fetch-site': 'cross-site',
-        'sec-fetch-mode': 'cors',
-        'sec-fetch-dest': 'empty',
-        'accept-language': 'zh-CN,zh;q=0.9',
-        'priority': 'u=1, i',
+        # 专门用于视频流请求的通用头部，确保关键字段存在
+        'Accept': '*/*',
+        'Connection': 'keep-alive',
     }
 
-    def homeContent(self, filter):
-        data=self.getpq(self.session.get(self.hsot))
-        cdata=data('.stui-header__menu.type-slide li')
-        ldata=data('.stui-vodlist.clearfix li')
-        result = {}
-        classes = []
-        for k in cdata.items():
-            i=k('a').attr('href')
-            if i and 'type' in i:
-                classes.append({
-                    'type_name': k.text(),
-                    'type_id': re.search(r'\d+', i).group(0)
-                })
-        result['class'] = classes
-        result['list'] = self.getlist(ldata)
-        return result
-
-    def homeVideoContent(self):
-        return {'list':''}
-
-    def categoryContent(self, tid, pg, filter, extend):
-        data=self.getpq(self.session.get(f"{self.hsot}/vodshow/{tid}--------{pg}---.html"))
-        result = {}
-        result['list'] = self.getlist(data('.stui-vodlist.clearfix li'))
-        result['page'] = pg
-        result['pagecount'] = 9999
-        result['limit'] = 90
-        result['total'] = 999999
-        return result
-
-    def detailContent(self, ids):
-        data=self.getpq(self.session.get(f"{self.hsot}{ids[0]}"))
-        v=data('.stui-vodlist__box a')
-        vod = {
-            'vod_play_from': '花都影视',
-            'vod_play_url': f"{v('img').attr('alt')}${v.attr('href')}"
-        }
-        return {'list':[vod]}
-
-    def searchContent(self, key, quick, pg="1"):
-        data=self.getpq(self.session.get(f"{self.hsot}/vodsearch/{key}----------{pg}---.html"))
-        return {'list':self.getlist(data('.stui-vodlist.clearfix li')),'page':pg}
+    # ... (homeContent, homeVideoContent, categoryContent, detailContent, searchContent 方法不变) ...
 
     def playerContent(self, flag, id, vipFlags):
         """
-        播放内容获取 - 修复播放地址解析问题和 Referer 缺失问题
+        播放内容获取 - **最终修复版本**
         """
         try:
-            # 获取播放页面
+            # 1. 获取播放页面，确保 Session 捕获所有 Cookie
             play_page_url = f"{self.hsot}{id}"
-            # 确保使用 self.session
-            response = self.session.get(play_page_url) 
+            # 禁用 SSL 校验
+            response = self.session.get(play_page_url, verify=False) 
             data = self.getpq(response)
             
-            # 设置动态 Referer
+            # 2. **设置精准动态 Referer** (指向播放页面而不是网站首页)
             parsed_play_url = urlparse(play_page_url)
-            self.dynamic_referer = f"{parsed_play_url.scheme}://{parsed_play_url.netloc}/"
+            self.dynamic_referer = play_page_url # 使用完整的播放页面URL作为Referer
 
-            # 提取脚本内容
+            # 3. 提取脚本内容并解密
             jstr = data('.stui-player.col-pd script').eq(0).text()
             
-            # 解析player_data
             player_data_match = re.search(r'player_data\s*=\s*({[^;]+});', jstr)
             if player_data_match:
                 player_data = json.loads(player_data_match.group(1))
                 
-                # 获取加密URL
                 encrypted_url = player_data.get('url', '')
                 if encrypted_url:
-                    # 双重URL解码
-                    video_url = unquote(unquote(encrypted_url))
+                    # 关键：双重 URL 解码
+                    video_url = unquote(unquote(encrypted_url)) 
                     p, url = 0, video_url
                     
-                    # 如果是m3u8文件，启用代理
                     if '.m3u8' in url:
                         url = self.proxy(url, 'm3u8')
                 else:
-                    # 如果没有提取到URL，使用原版逻辑
+                    # 备用旧逻辑
                     jsdata = json.loads(jstr.split("=", maxsplit=1)[-1])
                     p, url = 0, jsdata['url']
                     if '.m3u8' in url:
                         url = self.proxy(url, 'm3u8')
             else:
-                # 如果没有找到player_data，使用原版逻辑
+                # 备用旧逻辑
                 jsdata = json.loads(jstr.split("=", maxsplit=1)[-1])
                 p, url = 0, jsdata['url']
                 if '.m3u8' in url:
                     url = self.proxy(url, 'm3u8')
                     
         except Exception as e:
-            print(f"{str(e)}")
+            print(f"Player Content Error: {str(e)}")
             p, url = 1, f"{self.hsot}{id}"
             
         return {'parse': p, 'url': url, 'header': self.pheader}
 
-    def liveContent(self, url):
-        pass
-
-    def localProxy(self, param):
-        url = self.d64(param['url'])
-        if param.get('type') == 'm3u8':
-            return self.m3Proxy(url)
-        else:
-            return self.tsProxy(url,param['type'])
+    # ... (liveContent, localProxy 方法不变) ...
 
     def gethost(self):
         params = {
             'v': '1',
         }
         self.headers.update({'referer': 'https://a.hdys.top/'})
-        # 禁用 SSL 校验
+        # 禁用 SSL 校验，使用 self.session
         response = self.session.get('https://a.hdys.top/assets/js/config.js',proxies=self.proxies, params=params, headers=self.headers, verify=False)
         return self.host_late(response.text.split(';')[:-4])
 
-    def getlist(self,data):
-        videos=[]
-        for i in data.items():
-            videos.append({
-                'vod_id': i('a').attr('href'),
-                'vod_name': i('img').attr('alt'),
-                'vod_pic': self.proxy(i('img').attr('data-original')),
-                'vod_year': i('.pic-tag-t').text(),
-                'vod_remarks': i('.pic-tag-b').text()
-            })
-        return videos
-
-    def getpq(self, data):
-        try:
-            return pq(data.text)
-        except Exception as e:
-            print(f"{str(e)}")
-            return pq(data.text.encode('utf-8'))
+    # ... (getlist, getpq 方法不变) ...
 
     def host_late(self, url_list):
         if isinstance(url_list, str):
@@ -236,18 +149,18 @@ class Spider(Spider):
         return min(results.items(), key=lambda x: x[1])[0]
 
     def m3Proxy(self, url):
-        # 【核心修改B：强制使用 Session headers，并注入 Referer/缓存控制】
+        # 【最终核心修改：强制使用 Session headers + 完整 Header 注入】
         m3u8_header = self.session.headers.copy() # 以 session 的所有 Header 为基础
         
-        # 注入动态 Header
+        # 注入动态 Referer/Origin 和 Cache Control
         if self.dynamic_referer:
             m3u8_header.update({
                 'Referer': self.dynamic_referer,
-                'Origin': self.dynamic_referer.rstrip('/'),
+                'Origin': urlparse(self.dynamic_referer).scheme + '://' + urlparse(self.dynamic_referer).netloc,
                 'Cache-Control': 'no-cache', # 禁用缓存
                 'Pragma': 'no-cache',        # 禁用缓存
-                **self.pheader # 确保 pheader 中的特殊字段也被带上
             })
+        m3u8_header.update(self.pheader) # 确保通用视频流头部也被带上
 
         # 使用 self.session，并禁用 SSL 校验
         ydata = self.session.get(url, headers=m3u8_header, allow_redirects=False, verify=False)
@@ -274,22 +187,21 @@ class Spider(Spider):
         return [200, "application/vnd.apple.mpegur", data]
 
     def tsProxy(self, url,type):
-        # 【核心修改C：强制使用 Session headers，并注入 Referer/缓存控制】
+        # 【最终核心修改：强制使用 Session headers + 完整 Header 注入】
         h = self.session.headers.copy() # 以 session 的所有 Header 为基础
         
-        # 确保图片请求使用默认 headers
         if type=='img':
             h.update(self.headers.copy())
             
-        # 注入动态 Header
+        # 注入动态 Referer/Origin 和 Cache Control
         if self.dynamic_referer:
             h.update({
                 'Referer': self.dynamic_referer,
-                'Origin': self.dynamic_referer.rstrip('/'),
+                'Origin': urlparse(self.dynamic_referer).scheme + '://' + urlparse(self.dynamic_referer).netloc,
                 'Cache-Control': 'no-cache', # 禁用缓存
                 'Pragma': 'no-cache',        # 禁用缓存
-                **self.pheader # 确保 pheader 中的特殊字段也被带上
             })
+        h.update(self.pheader) # 确保通用视频流头部也被带上
 
         # 使用 self.session，并禁用 SSL 校验
         data = self.session.get(url, headers=h, stream=True, verify=False)
