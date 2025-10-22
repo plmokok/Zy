@@ -113,15 +113,13 @@ class Spider(Spider):
 
     def playerContent(self, flag, id, vipFlags):
         """
-        播放内容获取 - 最终修复版本
-        1. 保持双重URL解码算法。
-        2. 禁用 M3U8 代理/转发逻辑。
-        3. 强制设置 Referer 为播放页 URL，以通过网站的播放验证。
+        播放内容获取 - 修复 Header 传递版本
+        保留代理逻辑，但修复 Referer 校验问题。
         """
         p = 0
         url = f"{self.hsot}{id}" # 默认值
         play_page_url = f"{self.hsot}{id}" # 播放页 URL
-        
+
         try:
             # 获取播放页面
             response = self.session.get(play_page_url)
@@ -130,44 +128,42 @@ class Spider(Spider):
             # 提取脚本内容
             jstr = data('.stui-player.col-pd script').eq(0).text()
             
-            # 尝试解析player_data
+            # 解析player_data (保持双重解码逻辑)
             player_data_match = re.search(r'player_data\s*=\s*({[^;]+});', jstr)
             if player_data_match:
                 player_data = json.loads(player_data_match.group(1))
                 
-                # 获取加密URL
                 encrypted_url = player_data.get('url', '')
                 if encrypted_url:
-                    # 关键算法：双重URL解码
-                    url = unquote(unquote(encrypted_url))
-                    p = 0
+                    # 双重URL解码
+                    video_url = unquote(unquote(encrypted_url))
+                    p, url = 0, video_url
                     
-                    # ！！！禁用 M3U8 代理调用 ！！！
-                    # if '.m3u8' in url:
-                    #     url = self.proxy(url, 'm3u8')
-                
+                    # 如果是m3u8文件，启用代理 (保持原始逻辑)
+                    if '.m3u8' in url:
+                        url = self.proxy(url, 'm3u8')
+                else:
+                    # 使用原版逻辑
+                    jsdata = json.loads(jstr.split("=", maxsplit=1)[-1])
+                    p, url = 0, jsdata['url']
+                    if '.m3u8' in url:
+                        url = self.proxy(url, 'm3u8')
             else:
-                # 如果没有找到player_data，使用原版逻辑
+                # 使用原版逻辑
                 jsdata = json.loads(jstr.split("=", maxsplit=1)[-1])
                 p, url = 0, jsdata['url']
-                
-                # ！！！禁用 M3U8 代理调用 ！！！
-                # if '.m3u8' in url:
-                #     url = self.proxy(url, 'm3u8')
+                if '.m3u8' in url:
+                    url = self.proxy(url, 'm3u8')
                     
         except Exception as e:
-            # 播放地址获取失败，使用默认值
-            print(f"播放地址解析错误: {str(e)}")
+            print(f"{str(e)}")
             p, url = 1, f"{self.hsot}{id}"
-        
-        
-        # ！！！关键修复点：设置正确的 Referer ！！！
-        # 1. 以 self.headers 为基础，确保 User-Agent 等是正确的。
-        play_headers = self.headers.copy() 
-        # 2. 强制设置 Referer 为视频播放页面的 URL
-        play_headers['referer'] = play_page_url 
-        
-        # 返回解析结果
+
+        # ！！！关键修复：强制设置 Referer ！！！
+        # 复制 pheader 并注入正确的 Referer，该 Referer 会传递给本地代理
+        play_headers = self.pheader.copy()
+        play_headers['referer'] = play_page_url # 播放页URL作为Referer
+            
         return {'parse': p, 'url': url, 'header': play_headers}
 
     def liveContent(self, url):
