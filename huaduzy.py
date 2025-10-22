@@ -44,9 +44,16 @@ class Spider(Spider):
         self.session.proxies.update(self.proxies)
         self.session.headers.update(self.headers)
         
-        # 初始化CDN域名优化
-        self.fastest_cdn = self.select_fastest_cdn()
-        print(f"选择的CDN域名: {self.fastest_cdn}")
+        # CDN域名池
+        self.cdn_pool = [
+            'cdn5.hdzy.xyz',
+            'cdn.hdys.xyz', 
+            'cdn.hdys.top',
+            'cdn1.hdys.xyz',
+            'cdn2.hdys.xyz',
+            'cdn3.hdys.xyz',
+            'cdn4.hdys.xyz',
+        ]
         
         pass
 
@@ -161,15 +168,15 @@ class Spider(Spider):
             final_url = self.decode_video_url(encrypted_url, encrypt_type)
             print(f"解码后的播放地址: {final_url}")
             
-            # 使用最优CDN域名
-            optimized_url = self.optimize_cdn_domain(final_url)
-            print(f"CDN优化后的播放地址: {optimized_url}")
+            # 动态选择可用的CDN域名
+            playable_url = self.find_playable_cdn_url(final_url)
+            print(f"最终播放地址: {playable_url}")
             
             p = 0
-            if '.m3u8' in optimized_url:
-                optimized_url = self.proxy(optimized_url, 'm3u8')
+            if '.m3u8' in playable_url:
+                playable_url = self.proxy(playable_url, 'm3u8')
                 
-            return {'parse': p, 'url': optimized_url, 'header': self.pheader}
+            return {'parse': p, 'url': playable_url, 'header': self.pheader}
                 
         except Exception as e:
             print(f"播放地址解析失败: {str(e)}")
@@ -206,99 +213,67 @@ class Spider(Spider):
         else:
             return encrypted_url
 
-    def select_fastest_cdn(self):
-        """选择最快的CDN域名"""
-        # 已知的CDN域名列表
-        cdn_domains = [
-            'cdn5.hdzy.xyz',
-            'cdn.hdys.xyz', 
-            'cdn.hdys.top',
-            'cdn1.hdys.xyz',
-            'cdn2.hdys.xyz',
-            'cdn3.hdys.xyz',
-            'cdn4.hdys.xyz',
-        ]
+    def find_playable_cdn_url(self, original_url):
+        """找到可播放的CDN URL"""
+        from urllib.parse import urlparse, urlunparse
         
-        # 测试文件路径（使用一个小的测试文件）
-        test_path = "/videos/2025/10/14/68edb0317a1db507cf9584d2/1461a4/index.m3u8"
+        parsed = urlparse(original_url)
+        original_domain = parsed.netloc
+        video_path = parsed.path
         
-        results = {}
-        threads = []
+        # 如果原始域名可用，直接返回
+        if self.test_url_access(original_url):
+            print(f"原始域名 {original_domain} 可用")
+            return original_url
         
-        def test_cdn(cdn_domain):
+        # 尝试所有CDN域名
+        for cdn_domain in self.cdn_pool:
             try:
-                test_url = f"https://{cdn_domain}{test_path}"
-                start_time = time.time()
-                
-                # 发送HEAD请求测试响应时间
-                response = requests.head(
-                    test_url, 
-                    headers=self.pheader, 
-                    timeout=5,
-                    allow_redirects=True
-                )
-                
-                # 计算响应时间
-                delay = (time.time() - start_time) * 1000
-                
-                # 检查状态码
-                if response.status_code in [200, 302, 301]:
-                    results[cdn_domain] = delay
-                    print(f"CDN域名 {cdn_domain} 测试成功，响应时间: {delay:.2f}ms")
-                else:
-                    results[cdn_domain] = float('inf')
-                    print(f"CDN域名 {cdn_domain} 返回状态码: {response.status_code}")
-                    
-            except Exception as e:
-                results[cdn_domain] = float('inf')
-                print(f"CDN域名 {cdn_domain} 测试失败: {str(e)}")
-        
-        # 使用多线程测试所有CDN域名
-        for cdn in cdn_domains:
-            t = threading.Thread(target=test_cdn, args=(cdn,))
-            threads.append(t)
-            t.start()
-        
-        # 等待所有线程完成
-        for t in threads:
-            t.join()
-        
-        # 选择最快的CDN域名
-        if results:
-            fastest_cdn = min(results.items(), key=lambda x: x[1])[0]
-            print(f"最快的CDN域名: {fastest_cdn} (响应时间: {results[fastest_cdn]:.2f}ms)")
-            return fastest_cdn
-        else:
-            print("所有CDN域名测试失败，使用默认域名")
-            return 'cdn5.hdzy.xyz'  # 默认域名
-
-    def optimize_cdn_domain(self, video_url):
-        """优化CDN域名，使用最快的域名"""
-        try:
-            from urllib.parse import urlparse, urlunparse
-            
-            parsed = urlparse(video_url)
-            current_domain = parsed.netloc
-            
-            # 如果当前域名不是最快的域名，则替换
-            if current_domain != self.fastest_cdn:
-                optimized_url = urlunparse((
+                test_url = urlunparse((
                     parsed.scheme,
-                    self.fastest_cdn,
-                    parsed.path,
+                    cdn_domain,
+                    video_path,
                     parsed.params,
                     parsed.query,
                     parsed.fragment
                 ))
-                print(f"CDN域名优化: {current_domain} -> {self.fastest_cdn}")
-                return optimized_url
+                
+                if self.test_url_access(test_url):
+                    print(f"找到可用的CDN域名: {cdn_domain}")
+                    return test_url
+                else:
+                    print(f"CDN域名 {cdn_domain} 不可用")
+                    
+            except Exception as e:
+                print(f"测试CDN域名 {cdn_domain} 时出错: {str(e)}")
+                continue
+        
+        # 如果所有CDN都不可用，返回原始URL（让播放器处理）
+        print("所有CDN域名都不可用，返回原始URL")
+        return original_url
+
+    def test_url_access(self, url):
+        """测试URL是否可访问"""
+        try:
+            # 发送HEAD请求测试可访问性
+            response = requests.head(
+                url, 
+                headers=self.pheader, 
+                timeout=5,
+                allow_redirects=True
+            )
+            
+            # 检查状态码
+            if response.status_code in [200, 302, 301]:
+                print(f"URL测试成功: {url} (状态码: {response.status_code})")
+                return True
             else:
-                print(f"当前已使用最快CDN域名: {current_domain}")
-                return video_url
+                print(f"URL测试失败: {url} (状态码: {response.status_code})")
+                return False
                 
         except Exception as e:
-            print(f"CDN域名优化失败: {str(e)}")
-            return video_url
+            print(f"URL测试异常: {url} - {str(e)}")
+            return False
 
     def liveContent(self, url):
         pass
