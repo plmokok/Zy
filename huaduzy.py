@@ -1,5 +1,5 @@
 # -*- coding: utf-8 -*-
-# 花都影视TVBox修复版 - 针对播放缓冲但解析失败的问题
+# 花都影视TVBox终极版
 import json
 import re
 from urllib.parse import unquote
@@ -14,30 +14,26 @@ class Spider(Spider):
 
     def init(self, extend=""):
         '''
-        TVBox专用初始化
+        TVBox终极版初始化
         '''
         self.session = requests.Session()
         
-        # TVBox兼容的头部信息
+        # TVBox兼容的头部
         self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; TV) AppleWebKit/537.36',
+            'Accept': '*/*',
             'Accept-Language': 'zh-CN,zh;q=0.9',
-            'Accept-Encoding': 'gzip, deflate',
             'Connection': 'keep-alive',
         }
         
-        # 简化代理处理
+        # 代理设置
         try:
             self.proxies = json.loads(extend) if extend else {}
         except:
             self.proxies = {}
             
-        # 固定主机，避免复杂逻辑
+        # 固定主机
         self.host = 'https://hd.hdys2.com'
-        
-        # 设置referer
-        self.headers.update({'Referer': f"{self.host}/"})
         
         # 应用配置
         if self.proxies:
@@ -45,7 +41,7 @@ class Spider(Spider):
         self.session.headers.update(self.headers)
 
     def getName(self):
-        return "花都影视修复版"
+        return "花都影视"
 
     def isVideoFormat(self, url):
         return True
@@ -58,12 +54,12 @@ class Spider(Spider):
 
     def homeContent(self, filter):
         '''
-        首页内容
+        首页内容 - 终极稳定版
         '''
         try:
-            response = self.session.get(self.host, timeout=15)
+            response = self.session.get(self.host, timeout=10)
             if response.status_code != 200:
-                return self._get_static_home_data()
+                return self._get_fallback_data()
                 
             data = pq(response.text)
             
@@ -110,15 +106,15 @@ class Spider(Spider):
                 'list': videos
             }
             
-        except Exception as e:
-            return self._get_static_home_data()
+        except:
+            return self._get_fallback_data()
 
-    def _get_static_home_data(self):
-        '''备用首页数据'''
+    def _get_fallback_data(self):
+        '''备用数据'''
         return {
             'class': [
                 {'type_name': '有码', 'type_id': '1'},
-                {'type_name': '无码', 'type_id': '2'}, 
+                {'type_name': '无码', 'type_id': '2'},
                 {'type_name': '国产', 'type_id': '3'},
                 {'type_name': '欧美', 'type_id': '4'},
                 {'type_name': '动漫', 'type_id': '5'}
@@ -135,7 +131,7 @@ class Spider(Spider):
         '''
         try:
             url = f"{self.host}/vodshow/{tid}--------{pg}---.html"
-            response = self.session.get(url, timeout=15)
+            response = self.session.get(url, timeout=10)
             if response.status_code != 200:
                 return {'list': [], 'page': pg, 'pagecount': 1, 'limit': 90, 'total': 0}
                 
@@ -182,7 +178,7 @@ class Spider(Spider):
         '''
         try:
             url = f"{self.host}{ids[0]}"
-            response = self.session.get(url, timeout=15)
+            response = self.session.get(url, timeout=10)
             if response.status_code != 200:
                 return {'list': []}
                 
@@ -216,7 +212,6 @@ class Spider(Spider):
                 'vod_id': ids[0],
                 'vod_name': title,
                 'vod_pic': cover,
-                'vod_content': data('.stui-content__detail p.desc').text() or "",
                 'vod_play_from': '花都影视',
                 'vod_play_url': "#".join(play_links)
             }
@@ -235,7 +230,7 @@ class Spider(Spider):
             encoded_key = urllib.parse.quote(key)
             url = f"{self.host}/vodsearch/{encoded_key}----------{pg}---.html"
             
-            response = self.session.get(url, timeout=15)
+            response = self.session.get(url, timeout=10)
             if response.status_code != 200:
                 return {'list': [], 'page': pg}
                 
@@ -272,100 +267,89 @@ class Spider(Spider):
 
     def playerContent(self, flag, id, vipFlags):
         '''
-        播放内容 - 针对缓冲但解析失败的特殊处理
+        播放内容 - TVBox终极解决方案
         '''
         try:
             # 获取播放页面
             play_page_url = f"{self.host}{id}"
-            response = self.session.get(play_page_url, timeout=15)
+            response = self.session.get(play_page_url, timeout=10)
             data = pq(response.text)
             
             # 提取播放脚本
             scripts = data('.stui-player.col-pd script')
             if scripts.length == 0:
-                return self._create_play_result(play_page_url, 1, "未找到播放脚本")
+                return self._create_play_result(play_page_url, 1)
             
             script_text = scripts.eq(0).text()
             
             # 解析player_data
             player_data_match = re.search(r'player_data\s*=\s*({[^;]+});', script_text)
-            if not player_data_match:
-                return self._create_play_result(play_page_url, 1, "未找到player_data")
+            if player_data_match:
+                player_data = json.loads(player_data_match.group(1))
+                encrypted_url = player_data.get('url', '')
+                
+                if encrypted_url:
+                    # 双重URL解码
+                    video_url = unquote(unquote(encrypted_url))
+                    
+                    # 验证URL格式并返回
+                    if self._is_valid_video_url(video_url):
+                        return self._create_play_result(video_url, 0)
+                    
+                    # 如果URL验证失败，尝试备用方案
+                    return self._try_backup_solutions(encrypted_url, play_page_url)
             
-            player_data = json.loads(player_data_match.group(1))
-            encrypted_url = player_data.get('url', '')
-            
-            if not encrypted_url:
-                return self._create_play_result(play_page_url, 1, "player_data中没有url")
-            
-            # 双重URL解码
-            video_url = unquote(unquote(encrypted_url))
-            
-            # 验证URL格式
-            if not self._is_valid_video_url(video_url):
-                return self._create_play_result(play_page_url, 1, f"无效的视频URL: {video_url}")
-            
-            # 特殊处理：尝试多种播放方案
-            play_results = self._try_multiple_play_schemes(video_url, play_page_url)
-            
-            # 返回第一个方案（最有可能成功的）
-            return play_results[0]
+            # 备用方案：返回页面URL
+            return self._create_play_result(play_page_url, 1)
             
         except Exception as e:
-            return self._create_play_result(f"{self.host}{id}", 1, f"异常: {str(e)}")
+            # 最终备用方案
+            return self._create_play_result(f"{self.host}{id}", 1)
 
-    def _try_multiple_play_schemes(self, video_url, play_page_url):
-        '''
-        尝试多种播放方案，针对TVBox兼容性
-        '''
-        schemes = []
-        
-        # 方案1：直接返回视频URL，parse=0
-        schemes.append(self._create_play_result(video_url, 0, "方案1: 直接播放视频URL"))
-        
-        # 方案2：返回视频URL，但parse=1（让播放器解析）
-        schemes.append(self._create_play_result(video_url, 1, "方案2: 播放器解析视频URL"))
-        
-        # 方案3：如果视频URL是m3u8，尝试添加代理
-        if '.m3u8' in video_url:
-            proxy_url = self._create_proxy_url(video_url)
-            schemes.append(self._create_play_result(proxy_url, 0, "方案3: 代理m3u8"))
-        
-        # 方案4：返回播放页面URL
-        schemes.append(self._create_play_result(play_page_url, 1, "方案4: 返回播放页面"))
-        
-        return schemes
+    def _try_backup_solutions(self, encrypted_url, play_page_url):
+        '''尝试备用解密方案'''
+        try:
+            # 方案1: 单重URL解码
+            single_decode = unquote(encrypted_url)
+            if self._is_valid_video_url(single_decode):
+                return self._create_play_result(single_decode, 0)
+            
+            # 方案2: 三重URL解码
+            triple_decode = unquote(unquote(unquote(encrypted_url)))
+            if self._is_valid_video_url(triple_decode):
+                return self._create_play_result(triple_decode, 0)
+                
+            # 方案3: 直接使用加密URL（某些情况下可能已经是真实URL）
+            if self._is_valid_video_url(encrypted_url):
+                return self._create_play_result(encrypted_url, 0)
+                
+        except:
+            pass
+            
+        # 所有方案都失败，返回页面URL
+        return self._create_play_result(play_page_url, 1)
 
-    def _create_proxy_url(self, video_url):
-        '''创建代理URL'''
-        # 这里可以添加代理逻辑，如果需要的话
-        return video_url
-
-    def _create_play_result(self, url, parse_type, description=""):
+    def _create_play_result(self, url, parse_type):
         '''创建播放结果'''
         headers = {
-            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; TV) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.120 Safari/537.36',
+            'User-Agent': 'Mozilla/5.0 (Linux; Android 10; TV) AppleWebKit/537.36',
             'Referer': f'{self.host}/',
-            'Origin': self.host,
         }
         
-        # 如果是直接播放视频URL，添加更多头部信息
-        if parse_type == 0 and ('.m3u8' in url or '.mp4' in url):
-            headers.update({
-                'Accept': '*/*',
-                'Accept-Encoding': 'identity',
-                'Range': 'bytes=0-',
-            })
-        
-        print(f"播放方案: {description}")
-        print(f"播放URL: {url}")
-        print(f"解析类型: {parse_type}")
-        
-        return {
-            'parse': parse_type,
-            'url': url,
-            'header': headers
-        }
+        # 对于m3u8文件，确保使用正确的Content-Type
+        if '.m3u8' in url and parse_type == 0:
+            # 直接返回m3u8地址，让TVBox处理
+            return {
+                'parse': parse_type,
+                'url': url,
+                'header': headers
+            }
+        else:
+            return {
+                'parse': parse_type,
+                'url': url,
+                'header': headers
+            }
 
     def _is_valid_video_url(self, url):
         '''验证视频URL'''
@@ -376,7 +360,7 @@ class Spider(Spider):
             return False
             
         # 检查视频特征
-        video_indicators = ['.m3u8', '.mp4', 'm3u8', 'index.m3u8', 'video', 'videos']
+        video_indicators = ['.m3u8', '.mp4', 'm3u8', 'index.m3u8', 'video', 'videos', 'cdn']
         return any(indicator in url.lower() for indicator in video_indicators)
 
     def liveContent(self, url):
@@ -384,13 +368,14 @@ class Spider(Spider):
 
     def localProxy(self, param):
         '''
-        本地代理
+        本地代理 - 终极简化版
         '''
         try:
             url = param.get('url', '')
             if not url:
                 return [400, "text/plain", "Missing URL"]
                 
+            # 直接转发请求
             response = requests.get(url, timeout=10)
             return [200, response.headers.get('content-type', 'text/plain'), response.content]
             
