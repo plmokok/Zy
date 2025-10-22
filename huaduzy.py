@@ -7,7 +7,6 @@ import threading
 import time
 from base64 import b64encode, b64decode
 from urllib.parse import urlparse, unquote
-import binascii
 import requests
 from pyquery import PyQuery as pq
 sys.path.append('..')
@@ -43,17 +42,6 @@ class Spider(Spider):
         self.headers.update({'referer': f"{self.hsot}/"})
         self.session.proxies.update(self.proxies)
         self.session.headers.update(self.headers)
-        
-        # CDN域名池
-        self.cdn_pool = [
-            'cdn5.hdzy.xyz',
-            'cdn.hdys.xyz', 
-            'cdn.hdys.top',
-            'cdn1.hdys.xyz',
-            'cdn2.hdys.xyz',
-            'cdn3.hdys.xyz',
-            'cdn4.hdys.xyz',
-        ]
         
         pass
 
@@ -128,11 +116,12 @@ class Spider(Spider):
 
     def playerContent(self, flag, id, vipFlags):
         try:
-            # 访问播放页面而不是详情页
+            # 访问播放页面
             play_url = f"{self.hsot}{id}"
             print(f"正在访问播放页面: {play_url}")
             
-            data = self.getpq(self.session.get(play_url))
+            response = self.session.get(play_url)
+            data = self.getpq(response)
             
             # 查找包含player_data的脚本
             scripts = data('script')
@@ -147,30 +136,26 @@ class Spider(Spider):
             if not player_data_str:
                 raise Exception("未找到player_data脚本")
             
-            print(f"找到player_data脚本: {player_data_str[:200]}...")
-            
             # 提取player_data JSON
             json_match = re.search(r'player_data\s*=\s*({.*?});', player_data_str, re.DOTALL)
             if not json_match:
                 raise Exception("无法提取player_data JSON")
             
             player_data = json.loads(json_match.group(1))
-            print(f"解析到的player_data: {player_data}")
-            
-            # 获取加密的URL
             encrypted_url = player_data.get('url', '')
-            encrypt_type = player_data.get('encrypt', 0)
             
             if not encrypted_url:
                 raise Exception("player_data中未找到url字段")
             
-            # 解码播放地址
-            final_url = self.decode_video_url(encrypted_url, encrypt_type)
+            print(f"加密URL: {encrypted_url}")
+            
+            # 使用双重URL解码
+            final_url = self.decrypt_video_url(encrypted_url)
             print(f"解码后的播放地址: {final_url}")
             
-            # 动态选择可用的CDN域名
-            playable_url = self.find_playable_cdn_url(final_url)
-            print(f"最终播放地址: {playable_url}")
+            # CDN域名优化 - 替换为可播放的CDN域名
+            playable_url = self.optimize_cdn_domain(final_url)
+            print(f"优化后的播放地址: {playable_url}")
             
             p = 0
             if '.m3u8' in playable_url:
@@ -188,92 +173,40 @@ class Spider(Spider):
             print(f"使用备用方案，parse={p}, url={url}")
             return {'parse': p, 'url': url, 'header': self.pheader}
 
-    def decode_video_url(self, encrypted_url, encrypt_type):
-        """解码视频URL"""
-        if encrypt_type == 2:
-            # URL解码
-            decoded_url = unquote(encrypted_url)
-            print(f"URL解码后: {decoded_url}")
-            
-            # 检查是否是十六进制编码
-            try:
-                # 移除可能的空格和非十六进制字符
-                hex_str = ''.join(c for c in decoded_url if c in '0123456789abcdefABCDEF')
-                if len(hex_str) == len(decoded_url):
-                    # 完整的十六进制字符串
-                    url_bytes = binascii.unhexlify(hex_str)
-                    final_url = url_bytes.decode('utf-8')
-                    print(f"十六进制解码后: {final_url}")
-                    return final_url
-            except Exception as e:
-                print(f"十六进制解码失败: {str(e)}")
-            
-            # 如果不是十六进制，直接返回URL解码结果
-            return decoded_url
-        else:
-            return encrypted_url
+    def decrypt_video_url(self, encrypted_url):
+        """双重URL解码算法"""
+        # 第一次URL解码
+        first_decode = unquote(encrypted_url)
+        
+        # 第二次URL解码  
+        second_decode = unquote(first_decode)
+        
+        return second_decode
 
-    def find_playable_cdn_url(self, original_url):
-        """找到可播放的CDN URL"""
-        from urllib.parse import urlparse, urlunparse
+    def optimize_cdn_domain(self, video_url):
+        """CDN域名优化"""
+        # CDN域名映射表
+        cdn_mappings = {
+            'cdn.hdys.xyz': 'cdn5.hdzy.xyz',
+            'cdn.hdys.top': 'cdn5.hdzy.xyz',
+            'cdn1.hdys.xyz': 'cdn5.hdzy.xyz',
+            'cdn2.hdys.xyz': 'cdn5.hdzy.xyz',
+            'cdn3.hdys.xyz': 'cdn5.hdzy.xyz',
+            'cdn4.hdys.xyz': 'cdn5.hdzy.xyz',
+        }
         
-        parsed = urlparse(original_url)
-        original_domain = parsed.netloc
-        video_path = parsed.path
+        # 解析URL
+        parsed = urlparse(video_url)
+        current_domain = parsed.netloc
         
-        # 如果原始域名可用，直接返回
-        if self.test_url_access(original_url):
-            print(f"原始域名 {original_domain} 可用")
-            return original_url
+        # 如果当前域名在映射表中，则替换
+        if current_domain in cdn_mappings:
+            new_domain = cdn_mappings[current_domain]
+            optimized_url = video_url.replace(current_domain, new_domain)
+            print(f"CDN域名优化: {current_domain} -> {new_domain}")
+            return optimized_url
         
-        # 尝试所有CDN域名
-        for cdn_domain in self.cdn_pool:
-            try:
-                test_url = urlunparse((
-                    parsed.scheme,
-                    cdn_domain,
-                    video_path,
-                    parsed.params,
-                    parsed.query,
-                    parsed.fragment
-                ))
-                
-                if self.test_url_access(test_url):
-                    print(f"找到可用的CDN域名: {cdn_domain}")
-                    return test_url
-                else:
-                    print(f"CDN域名 {cdn_domain} 不可用")
-                    
-            except Exception as e:
-                print(f"测试CDN域名 {cdn_domain} 时出错: {str(e)}")
-                continue
-        
-        # 如果所有CDN都不可用，返回原始URL（让播放器处理）
-        print("所有CDN域名都不可用，返回原始URL")
-        return original_url
-
-    def test_url_access(self, url):
-        """测试URL是否可访问"""
-        try:
-            # 发送HEAD请求测试可访问性
-            response = requests.head(
-                url, 
-                headers=self.pheader, 
-                timeout=5,
-                allow_redirects=True
-            )
-            
-            # 检查状态码
-            if response.status_code in [200, 302, 301]:
-                print(f"URL测试成功: {url} (状态码: {response.status_code})")
-                return True
-            else:
-                print(f"URL测试失败: {url} (状态码: {response.status_code})")
-                return False
-                
-        except Exception as e:
-            print(f"URL测试异常: {url} - {str(e)}")
-            return False
+        return video_url
 
     def liveContent(self, url):
         pass
