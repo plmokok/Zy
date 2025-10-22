@@ -112,7 +112,8 @@ class Spider(Spider):
 
     def playerContent(self, flag, id, vipFlags):
         """
-        播放内容获取 - 专门针对TVBox播放器优化的版本
+        播放内容获取 - 最小修改版本
+        只修复播放地址解析问题，其他保持原样
         """
         try:
             # 获取播放页面
@@ -133,89 +134,29 @@ class Spider(Spider):
                 if encrypted_url:
                     # 双重URL解码
                     video_url = unquote(unquote(encrypted_url))
+                    p, url = 0, video_url
                     
-                    # 确保URL是完整的
-                    if not video_url.startswith('http'):
-                        if video_url.startswith('//'):
-                            video_url = 'https:' + video_url
-                    
-                    print(f"解密后的视频URL: {video_url}")
-                    
-                    # 对于TVBox，尝试不同的播放策略
-                    return self.create_tvbox_play_result(video_url, play_page_url)
+                    # 如果是m3u8文件，启用代理
+                    if '.m3u8' in url:
+                        url = self.proxy(url, 'm3u8')
                 else:
                     # 如果没有提取到URL，使用原版逻辑
                     jsdata = json.loads(jstr.split("=", maxsplit=1)[-1])
-                    video_url = jsdata['url']
-                    return self.create_tvbox_play_result(video_url, play_page_url)
+                    p, url = 0, jsdata['url']
+                    if '.m3u8' in url:
+                        url = self.proxy(url, 'm3u8')
             else:
                 # 如果没有找到player_data，使用原版逻辑
                 jsdata = json.loads(jstr.split("=", maxsplit=1)[-1])
-                video_url = jsdata['url']
-                return self.create_tvbox_play_result(video_url, play_page_url)
+                p, url = 0, jsdata['url']
+                if '.m3u8' in url:
+                    url = self.proxy(url, 'm3u8')
                     
         except Exception as e:
             print(f"{str(e)}")
-            # 备用方案：直接返回页面URL让播放器解析
-            return {
-                'parse': 1, 
-                'url': f"{self.hsot}{id}", 
-                'header': self.pheader
-            }
-
-    def create_tvbox_play_result(self, video_url, play_page_url):
-        """
-        为TVBox创建播放结果 - 尝试多种策略
-        """
-        # 策略1: 直接返回解密后的m3u8地址
-        if '.m3u8' in video_url:
-            print("策略1: 直接返回m3u8地址")
-            return {
-                'parse': 0,
-                'url': video_url,
-                'header': self.get_tvbox_headers(video_url)
-            }
-        
-        # 策略2: 如果视频地址不是m3u8，尝试其他格式
-        elif any(ext in video_url for ext in ['.mp4', '.flv', '.avi']):
-            print("策略2: 返回其他视频格式地址")
-            return {
-                'parse': 0,
-                'url': video_url,
-                'header': self.get_tvbox_headers(video_url)
-            }
-        
-        # 策略3: 如果以上都不行，返回页面URL让播放器解析
-        else:
-            print("策略3: 返回页面URL让播放器解析")
-            return {
-                'parse': 1,
-                'url': play_page_url,
-                'header': self.pheader
-            }
-
-    def get_tvbox_headers(self, video_url):
-        """
-        获取TVBox播放器专用的头部信息
-        """
-        headers = self.pheader.copy()
-        
-        # 添加Referer，确保视频服务器能正确响应
-        if 'hd.hdys' in video_url:
-            headers['Referer'] = f'{self.hsot}/'
-        elif 'cdnhdzy' in video_url or 'hdzy' in video_url:
-            # 对于CDN地址，使用通用的Referer
-            headers['Referer'] = 'https://hd.hdys2.com/'
-        
-        # 添加更多的兼容性头部
-        headers.update({
-            'Accept': '*/*',
-            'Accept-Encoding': 'identity',
-            'Connection': 'keep-alive',
-            'Range': 'bytes=0-',
-        })
-        
-        return headers
+            p, url = 1, f"{self.hsot}{id}"
+            
+        return {'parse': p, 'url': url, 'header': self.pheader}
 
     def liveContent(self, url):
         pass
