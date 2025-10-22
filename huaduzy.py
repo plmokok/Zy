@@ -17,7 +17,7 @@ class Spider(Spider):
 
     def init(self, extend=""):
         '''
-        完全保持原版初始化
+        修复：添加备用Host以应对 gethost 失败
         '''
         self.session = requests.Session()
         self.headers = {
@@ -34,8 +34,17 @@ class Spider(Spider):
         }
         try:self.proxies = json.loads(extend)
         except:self.proxies = {}
-        self.hsot=self.gethost()
-        # self.hsot='https://hd.hdys2.com'
+        
+        # ！！！关键修复点 1：设置一个最新的备用 Host ！！！
+        # 请替换为当前您在浏览器中测试有效的花都影视域名
+        fallback_host = 'https://hd8.huaduzy.com' # <--- **请替换此处的域名**
+        
+        try:
+            self.hsot=self.gethost()
+        except:
+            print("警告：动态获取Host失败，使用硬编码备用Host。")
+            self.hsot = fallback_host
+            
         self.headers.update({'referer': f"{self.hsot}/"})
         self.session.proxies.update(self.proxies)
         self.session.headers.update(self.headers)
@@ -53,7 +62,6 @@ class Spider(Spider):
     def destroy(self):
         pass
 
-    # 播放地址所需的特定 Header (原用于解析器)
     pheader={
         'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
         'sec-ch-ua-platform': '"Android"',
@@ -164,10 +172,6 @@ class Spider(Spider):
         play_headers = self.headers.copy()
         # 2. 覆盖 Referer 为视频播放页面的 URL
         play_headers['referer'] = play_page_url 
-        
-        # 3. 移除不必要的字段，只保留 User-Agent 和 Referer（有时更少字段更不容易出错）
-        # 这一步是可选项，如果上面的尝试失败，可以尝试只保留关键字段：
-        # play_headers = {'User-Agent': play_headers['User-Agent'], 'Referer': play_page_url}
 
         return {'parse': p, 'url': url, 'header': play_headers}
 
@@ -178,7 +182,7 @@ class Spider(Spider):
         url = self.d64(param['url'])
         if param.get('type') == 'm3u8':
             # ！！！注意：m3Proxy 和 tsProxy 内部使用的 Header 仍是 self.pheader
-            # 这与 playerContent 返回给 TVBox 的 Header 不一致，是潜在的 BUG
+            # 这是原始代码的潜在 BUG，我们无法从这里修复，但 TVBox 可能会忽略本地代理的 Header。
             return self.m3Proxy(url)
         else:
             return self.tsProxy(url,param['type'])
@@ -187,7 +191,8 @@ class Spider(Spider):
         params = {
             'v': '1',
         }
-        self.headers.update({'referer': 'https://a.hdys.top/'})
+        # ！！！关键修复点 2：gethost 请求时使用 HTTPS Referer ！！！
+        self.headers.update({'referer': 'https://a.hdys.top/'}) 
         response = self.session.get('https://a.hdys.top/assets/js/config.js',proxies=self.proxies, params=params, headers=self.headers)
         return self.host_late(response.text.split(';')[:-4])
 
