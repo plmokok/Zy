@@ -113,24 +113,28 @@ class Spider(Spider):
 
     def playerContent(self, flag, id, vipFlags):
         """
-        播放内容获取 - 最小修改版本
-        只修改这一行：在提取URL后立即进行双重解码
+        播放内容获取 - 只修改这个方法，添加URL解密
         """
         try:
             data=self.getpq(self.session.get(f"{self.hsot}{id}"))
             jstr=data('.stui-player.col-pd script').eq(0).text()
             jsdata=json.loads(jstr.split("=", maxsplit=1)[-1])
             
-            # 唯一修改：对提取的URL进行双重解码
+            # 获取原始URL
             encrypted_url = jsdata['url']
+            
+            # 双重URL解码（关键修复）
             video_url = unquote(unquote(encrypted_url))
             
-            p,url=0,video_url
-            if '.m3u8' in url:url=self.proxy(url,'m3u8')
+            p, url = 0, video_url
+            if '.m3u8' in url:
+                url = self.proxy(url,'m3u8')
+                
         except Exception as e:
             print(f"{str(e)}")
-            p,url=1,f"{self.hsot}{id}"
-        return  {'parse': p, 'url': url, 'header': self.pheader}
+            p, url = 1, f"{self.hsot}{id}"
+            
+        return {'parse': p, 'url': url, 'header': self.pheader}
 
     def liveContent(self, url):
         pass
@@ -230,6 +234,10 @@ class Spider(Spider):
     def proxy(self, data, type='img'):
         if data and len(self.proxies):return f"{self.getProxyUrl()}&url={self.e64(data)}&type={type}"
         else:return data
+
+    def getProxyUrl(self):
+        """添加缺失的代理URL方法"""
+        return "http://127.0.0.1:9978/proxy?do=py"
 
     def e64(self, text):
         try:
