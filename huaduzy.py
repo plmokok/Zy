@@ -6,7 +6,8 @@ import sys
 import threading
 import time
 from base64 import b64encode, b64decode
-from urllib.parse import urlparse
+from urllib.parse import urlparse, unquote
+import binascii
 import requests
 from pyquery import PyQuery as pq
 sys.path.append('..')
@@ -34,13 +35,10 @@ class Spider(Spider):
             'priority': 'u=2',
         }
         try:
-            self.proxies = json.loads(extend) if extend else {}
+            self.proxies = json.loads(extend)
         except:
             self.proxies = {}
-            print("代理配置解析失败，使用无代理模式")
-        
         self.hsot = self.gethost()
-        print(f"使用的主机地址: {self.hsot}")
         # self.hsot='https://hd.hdys2.com'
         self.headers.update({'referer': f"{self.hsot}/"})
         self.session.proxies.update(self.proxies)
@@ -59,7 +57,7 @@ class Spider(Spider):
     def destroy(self):
         pass
 
-    pheader={
+    pheader = {
         'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
         'sec-ch-ua-platform': '"Android"',
         'sec-ch-ua': '"Not/A)Brand";v="8", "Chromium";v="130", "Google Chrome";v="130"',
@@ -74,13 +72,13 @@ class Spider(Spider):
     }
 
     def homeContent(self, filter):
-        data=self.getpq(self.session.get(self.hsot))
-        cdata=data('.stui-header__menu.type-slide li')
-        ldata=data('.stui-vodlist.clearfix li')
+        data = self.getpq(self.session.get(self.hsot))
+        cdata = data('.stui-header__menu.type-slide li')
+        ldata = data('.stui-vodlist.clearfix li')
         result = {}
         classes = []
         for k in cdata.items():
-            i=k('a').attr('href')
+            i = k('a').attr('href')
             if i and 'type' in i:
                 classes.append({
                     'type_name': k.text(),
@@ -91,10 +89,10 @@ class Spider(Spider):
         return result
 
     def homeVideoContent(self):
-        return {'list':''}
+        return {'list': ''}
 
     def categoryContent(self, tid, pg, filter, extend):
-        data=self.getpq(self.session.get(f"{self.hsot}/vodshow/{tid}--------{pg}---.html"))
+        data = self.getpq(self.session.get(f"{self.hsot}/vodshow/{tid}--------{pg}---.html"))
         result = {}
         result['list'] = self.getlist(data('.stui-vodlist.clearfix li'))
         result['page'] = pg
@@ -104,93 +102,104 @@ class Spider(Spider):
         return result
 
     def detailContent(self, ids):
-        data=self.getpq(self.session.get(f"{self.hsot}{ids[0]}"))
-        v=data('.stui-vodlist__box a')
+        data = self.getpq(self.session.get(f"{self.hsot}{ids[0]}"))
+        v = data('.stui-vodlist__box a')
         vod = {
             'vod_play_from': '花都影视',
             'vod_play_url': f"{v('img').attr('alt')}${v.attr('href')}"
         }
-        return {'list':[vod]}
+        return {'list': [vod]}
 
     def searchContent(self, key, quick, pg="1"):
-        data=self.getpq(self.session.get(f"{self.hsot}/vodsearch/{key}----------{pg}---.html"))
-        return {'list':self.getlist(data('.stui-vodlist.clearfix li')),'page':pg}
+        data = self.getpq(self.session.get(f"{self.hsot}/vodsearch/{key}----------{pg}---.html"))
+        return {'list': self.getlist(data('.stui-vodlist.clearfix li')), 'page': pg}
 
     def playerContent(self, flag, id, vipFlags):
         try:
-            print(f"开始解析播放地址: {self.hsot}{id}")
-            data = self.getpq(self.session.get(f"{self.hsot}{id}"))
-            jstr = data('.stui-player.col-pd script').eq(0).text()
-            print(f"原始脚本内容: {jstr[:200]}...")  # 只打印前200字符用于调试
+            # 访问播放页面而不是详情页
+            play_url = f"{self.hsot}{id}"
+            print(f"正在访问播放页面: {play_url}")
             
-            # 改进的JSON提取方法
-            url = self.extract_video_url(jstr)
+            data = self.getpq(self.session.get(play_url))
             
-            if not url:
-                raise Exception("无法从脚本中提取播放地址")
-                
-            print(f"提取的播放地址: {url}")
+            # 查找包含player_data的脚本
+            scripts = data('script')
+            player_data_str = None
+            
+            for script in scripts.items():
+                script_text = script.text()
+                if script_text and 'player_data' in script_text:
+                    player_data_str = script_text
+                    break
+            
+            if not player_data_str:
+                raise Exception("未找到player_data脚本")
+            
+            print(f"找到player_data脚本: {player_data_str[:200]}...")
+            
+            # 提取player_data JSON
+            json_match = re.search(r'player_data\s*=\s*({.*?});', player_data_str, re.DOTALL)
+            if not json_match:
+                raise Exception("无法提取player_data JSON")
+            
+            player_data = json.loads(json_match.group(1))
+            print(f"解析到的player_data: {player_data}")
+            
+            # 获取加密的URL
+            encrypted_url = player_data.get('url', '')
+            encrypt_type = player_data.get('encrypt', 0)
+            
+            if not encrypted_url:
+                raise Exception("player_data中未找到url字段")
+            
+            # 解码播放地址
+            final_url = self.decode_video_url(encrypted_url, encrypt_type)
+            print(f"解码后的播放地址: {final_url}")
+            
+            # 简单直接的CDN域名替换
+            optimized_url = final_url.replace('cdn.hdys.xyz', 'cdn5.hdzy.xyz')
+            print(f"CDN优化后的播放地址: {optimized_url}")
+            
             p = 0
-            
-            # 检查地址类型并处理
-            if '.m3u8' in url:
-                url = self.proxy(url, 'm3u8')
-            elif 'url=' in url:
-                # 处理base64编码的地址
-                url_match = re.search(r'url=([^&]+)', url)
-                if url_match:
-                    url = self.d64(url_match.group(1))
-                    
+            if '.m3u8' in optimized_url:
+                optimized_url = self.proxy(optimized_url, 'm3u8')
+                
+            return {'parse': p, 'url': optimized_url, 'header': self.pheader}
+                
         except Exception as e:
             print(f"播放地址解析失败: {str(e)}")
-            # 备用方案：尝试其他选择器
-            try:
-                iframe_src = data('iframe').attr('src')
-                if iframe_src:
-                    url = iframe_src
-                    p = 1
-                else:
-                    raise Exception("无备用播放地址")
-            except:
-                p, url = 1, f"{self.hsot}{id}"
-                
-        return {'parse': p, 'url': url, 'header': self.pheader}
+            import traceback
+            traceback.print_exc()
+            
+            # 备用方案：返回播放页面URL，让播放器自行解析
+            p, url = 1, f"{self.hsot}{id}"
+            print(f"使用备用方案，parse={p}, url={url}")
+            return {'parse': p, 'url': url, 'header': self.pheader}
 
-    def extract_video_url(self, jstr):
-        """改进的视频地址提取方法"""
-        # 方法1: 直接提取JSON对象
-        json_match = re.search(r'=\s*({.*?})\s*;', jstr, re.DOTALL)
-        if json_match:
+    def decode_video_url(self, encrypted_url, encrypt_type):
+        """解码视频URL"""
+        if encrypt_type == 2:
+            # URL解码
+            decoded_url = unquote(encrypted_url)
+            print(f"URL解码后: {decoded_url}")
+            
+            # 检查是否是十六进制编码
             try:
-                jsdata = json.loads(json_match.group(1))
-                return jsdata.get('url', '')
-            except:
-                pass
-        
-        # 方法2: 提取url字段
-        url_match = re.search(r"url\s*:\s*['\"]([^'\"]+)['\"]", jstr)
-        if url_match:
-            return url_match.group(1)
+                # 移除可能的空格和非十六进制字符
+                hex_str = ''.join(c for c in decoded_url if c in '0123456789abcdefABCDEF')
+                if len(hex_str) == len(decoded_url):
+                    # 完整的十六进制字符串
+                    url_bytes = binascii.unhexlify(hex_str)
+                    final_url = url_bytes.decode('utf-8')
+                    print(f"十六进制解码后: {final_url}")
+                    return final_url
+            except Exception as e:
+                print(f"十六进制解码失败: {str(e)}")
             
-        # 方法3: 提取var定义的url
-        var_match = re.search(r"var\s+[^=]*=\s*['\"]([^'\"]+)['\"]", jstr)
-        if var_match:
-            return var_match.group(1)
-            
-        # 方法4: 尝试提取任何看起来像视频地址的URL
-        video_patterns = [
-            r"https?://[^'\"]+\.m3u8[^'\"]*",
-            r"https?://[^'\"]+\.mp4[^'\"]*",
-            r"https?://[^'\"]+/play[^'\"]*",
-            r"https?://[^'\"]+/video[^'\"]*"
-        ]
-        
-        for pattern in video_patterns:
-            video_match = re.search(pattern, jstr)
-            if video_match:
-                return video_match.group(0)
-                
-        return None
+            # 如果不是十六进制，直接返回URL解码结果
+            return decoded_url
+        else:
+            return encrypted_url
 
     def liveContent(self, url):
         pass
@@ -200,29 +209,18 @@ class Spider(Spider):
         if param.get('type') == 'm3u8':
             return self.m3Proxy(url)
         else:
-            return self.tsProxy(url,param['type'])
+            return self.tsProxy(url, param['type'])
 
     def gethost(self):
-        try:
-            params = {
-                'v': '1',
-            }
-            self.headers.update({'referer': 'https://a.hdys.top/'})
-            response = self.session.get('https://a.hdys.top/assets/js/config.js', 
-                                      proxies=self.proxies, params=params, headers=self.headers)
-            print(f"获取主机配置状态码: {response.status_code}")
-            
-            if response.status_code != 200:
-                print("使用备用主机地址")
-                return 'https://hd.hdys2.com'
-                
-            return self.host_late(response.text.split(';')[:-4])
-        except Exception as e:
-            print(f"获取主机地址失败: {e}")
-            return 'https://hd.hdys2.com'  # 备用地址
+        params = {
+            'v': '1',
+        }
+        self.headers.update({'referer': 'https://a.hdys.top/'})
+        response = self.session.get('https://a.hdys.top/assets/js/config.js', proxies=self.proxies, params=params, headers=self.headers)
+        return self.host_late(response.text.split(';')[:-4])
 
-    def getlist(self,data):
-        videos=[]
+    def getlist(self, data):
+        videos = []
         for i in data.items():
             videos.append({
                 'vod_id': i('a').attr('href'),
@@ -237,7 +235,7 @@ class Spider(Spider):
         try:
             return pq(data.text)
         except Exception as e:
-            print(f"解析HTML失败: {str(e)}")
+            print(f"{str(e)}")
             return pq(data.text.encode('utf-8'))
 
     def host_late(self, url_list):
@@ -254,16 +252,14 @@ class Spider(Spider):
 
         def test_host(url):
             try:
-                url=re.findall(r'"([^"]*)"', url)[0]
+                url = re.findall(r'"([^"]*)"', url)[0]
                 start_time = time.time()
                 self.headers.update({'referer': f'{url}/'})
-                response = requests.head(url,proxies=self.proxies,headers=self.headers,timeout=1.0, allow_redirects=False)
+                response = requests.head(url, proxies=self.proxies, headers=self.headers, timeout=1.0, allow_redirects=False)
                 delay = (time.time() - start_time) * 1000
                 results[url] = delay
-                print(f"测试主机 {url}: {delay}ms")
             except Exception as e:
                 results[url] = float('inf')
-                print(f"测试主机 {url} 失败: {e}")
 
         for url in urls:
             t = threading.Thread(target=test_host, args=(url,))
@@ -273,42 +269,33 @@ class Spider(Spider):
         for t in threads:
             t.join()
 
-        best_host = min(results.items(), key=lambda x: x[1])[0]
-        print(f"选择最佳主机: {best_host}")
-        return best_host
+        return min(results.items(), key=lambda x: x[1])[0]
 
     def m3Proxy(self, url):
-        try:
-            ydata = requests.get(url, headers=self.pheader, proxies=self.proxies, allow_redirects=False)
-            data = ydata.content.decode('utf-8')
-            if ydata.headers.get('Location'):
-                url = ydata.headers['Location']
-                data = requests.get(url, headers=self.pheader, proxies=self.proxies).content.decode('utf-8')
-            lines = data.strip().split('\n')
-            last_r = url[:url.rfind('/')]
-            parsed_url = urlparse(url)
-            durl = parsed_url.scheme + "://" + parsed_url.netloc
-            for index, string in enumerate(lines):
-                if '#EXT' not in string:
-                    if 'http' not in string:
-                        domain=last_r if string.count('/') < 2 else durl
-                        string = domain + ('' if string.startswith('/') else '/') + string
-                    lines[index] = self.proxy(string, string.split('.')[-1].split('?')[0])
-            data = '\n'.join(lines)
-            return [200, "application/vnd.apple.mpegur", data]
-        except Exception as e:
-            print(f"m3u8代理处理失败: {e}")
-            return [500, "text/plain", f"代理处理失败: {str(e)}"]
+        ydata = requests.get(url, headers=self.pheader, proxies=self.proxies, allow_redirects=False)
+        data = ydata.content.decode('utf-8')
+        if ydata.headers.get('Location'):
+            url = ydata.headers['Location']
+            data = requests.get(url, headers=self.pheader, proxies=self.proxies).content.decode('utf-8')
+        lines = data.strip().split('\n')
+        last_r = url[:url.rfind('/')]
+        parsed_url = urlparse(url)
+        durl = parsed_url.scheme + "://" + parsed_url.netloc
+        for index, string in enumerate(lines):
+            if '#EXT' not in string:
+                if 'http' not in string:
+                    domain = last_r if string.count('/') < 2 else durl
+                    string = domain + ('' if string.startswith('/') else '/') + string
+                lines[index] = self.proxy(string, string.split('.')[-1].split('?')[0])
+        data = '\n'.join(lines)
+        return [200, "application/vnd.apple.mpegur", data]
 
-    def tsProxy(self, url,type):
-        try:
-            h=self.pheader.copy()
-            if type=='img':h=self.headers.copy()
-            data = requests.get(url, headers=h, proxies=self.proxies, stream=True)
-            return [200, data.headers['Content-Type'], data.content]
-        except Exception as e:
-            print(f"ts代理处理失败: {e}")
-            return [500, "text/plain", f"代理处理失败: {str(e)}"]
+    def tsProxy(self, url, type):
+        h = self.pheader.copy()
+        if type == 'img':
+            h = self.headers.copy()
+        data = requests.get(url, headers=h, proxies=self.proxies, stream=True)
+        return [200, data.headers['Content-Type'], data.content]
 
     def proxy(self, data, type='img'):
         if data and len(self.proxies):
@@ -325,7 +312,7 @@ class Spider(Spider):
             print(f"Base64编码错误: {str(e)}")
             return ""
 
-    def d64(self,encoded_text):
+    def d64(self, encoded_text):
         try:
             encoded_bytes = encoded_text.encode('utf-8')
             decoded_bytes = b64decode(encoded_bytes)
