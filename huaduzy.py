@@ -15,6 +15,8 @@ from base.spider import Spider
 
 class Spider(Spider):
 
+    # 类的其他方法和属性保持不变...
+    
     def init(self, extend=""):
         '''
         完全保持原版初始化
@@ -39,6 +41,8 @@ class Spider(Spider):
         self.headers.update({'referer': f"{self.hsot}/"})
         self.session.proxies.update(self.proxies)
         self.session.headers.update(self.headers)
+        # 【新增属性】用于存储播放页面的Referer
+        self.dynamic_referer = None 
         pass
 
     def getName(self):
@@ -59,7 +63,7 @@ class Spider(Spider):
         'sec-ch-ua': '"Not/A)Brand";v="8", "Chromium";v="130", "Google Chrome";v="130"',
         'dnt': '1',
         'sec-ch-ua-mobile': '?1',
-        'origin': 'https://jx.8852.top',
+        'origin': 'https://jx.8852.top', # 这个Origin可能需要被覆盖
         'sec-fetch-site': 'cross-site',
         'sec-fetch-mode': 'cors',
         'sec-fetch-dest': 'empty',
@@ -112,8 +116,7 @@ class Spider(Spider):
 
     def playerContent(self, flag, id, vipFlags):
         """
-        播放内容获取 - 最小修改版本
-        只修复播放地址解析问题，其他保持原样
+        播放内容获取 - 修复播放地址解析问题和 Referer 缺失问题
         """
         try:
             # 获取播放页面
@@ -121,6 +124,10 @@ class Spider(Spider):
             response = self.session.get(play_page_url)
             data = self.getpq(response)
             
+            # 【核心修改A】设置动态 Referer
+            parsed_play_url = urlparse(play_page_url)
+            self.dynamic_referer = f"{parsed_play_url.scheme}://{parsed_play_url.netloc}/"
+
             # 提取脚本内容
             jstr = data('.stui-player.col-pd script').eq(0).text()
             
@@ -229,11 +236,21 @@ class Spider(Spider):
         return min(results.items(), key=lambda x: x[1])[0]
 
     def m3Proxy(self, url):
-        ydata = requests.get(url, headers=self.pheader, proxies=self.proxies, allow_redirects=False)
+        # 【核心修改B】动态 Referer 应用于 M3U8 请求
+        m3u8_header = self.pheader.copy()
+        if self.dynamic_referer:
+            m3u8_header['Referer'] = self.dynamic_referer
+            m3u8_header['Origin'] = self.dynamic_referer.rstrip('/')
+
+        ydata = requests.get(url, headers=m3u8_header, proxies=self.proxies, allow_redirects=False)
         data = ydata.content.decode('utf-8')
         if ydata.headers.get('Location'):
             url = ydata.headers['Location']
-            data = requests.get(url, headers=self.pheader, proxies=self.proxies).content.decode('utf-8')
+            
+            # 【注意】重定向后的请求也要使用更新后的header
+            ydata = requests.get(url, headers=m3u8_header, proxies=self.proxies)
+            data = ydata.content.decode('utf-8')
+
         lines = data.strip().split('\n')
         last_r = url[:url.rfind('/')]
         parsed_url = urlparse(url)
@@ -248,8 +265,15 @@ class Spider(Spider):
         return [200, "application/vnd.apple.mpegur", data]
 
     def tsProxy(self, url,type):
-        h=self.pheader.copy()
-        if type=='img':h=self.headers.copy()
+        # 【核心修改C】动态 Referer 应用于 TS 分段请求
+        h = self.pheader.copy()
+        if type=='img':
+            h = self.headers.copy()
+        
+        if self.dynamic_referer:
+            h['Referer'] = self.dynamic_referer
+            h['Origin'] = self.dynamic_referer.rstrip('/')
+
         data = requests.get(url, headers=h, proxies=self.proxies, stream=True)
         return [200, data.headers['Content-Type'], data.content]
 
