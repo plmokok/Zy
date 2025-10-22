@@ -113,17 +113,17 @@ class Spider(Spider):
 
     def playerContent(self, flag, id, vipFlags):
         """
-        播放内容获取 - 修复版本
-        1. 保持双重URL解码算法不变。
-        2. 禁用 M3U8 代理/转发逻辑，直接返回真实 URL。
-        3. 调整返回的 Header 为包含正确 Referer 的主站 Header，以通过网站的播放验证。
+        播放内容获取 - 最终修复版本
+        1. 保持双重URL解码算法。
+        2. 禁用 M3U8 代理/转发逻辑。
+        3. 强制设置 Referer 为播放页 URL，以通过网站的播放验证。
         """
         p = 0
         url = f"{self.hsot}{id}" # 默认值
+        play_page_url = f"{self.hsot}{id}" # 播放页 URL
         
         try:
             # 获取播放页面
-            play_page_url = f"{self.hsot}{id}"
             response = self.session.get(play_page_url)
             data = self.getpq(response)
             
@@ -138,11 +138,11 @@ class Spider(Spider):
                 # 获取加密URL
                 encrypted_url = player_data.get('url', '')
                 if encrypted_url:
-                    # 关键修复点：双重URL解码，确保获取真实播放地址
+                    # 关键算法：双重URL解码
                     url = unquote(unquote(encrypted_url))
                     p = 0
                     
-                    # ！！！移除 M3U8 代理调用 ！！！
+                    # ！！！禁用 M3U8 代理调用 ！！！
                     # if '.m3u8' in url:
                     #     url = self.proxy(url, 'm3u8')
                 
@@ -151,7 +151,7 @@ class Spider(Spider):
                 jsdata = json.loads(jstr.split("=", maxsplit=1)[-1])
                 p, url = 0, jsdata['url']
                 
-                # ！！！移除 M3U8 代理调用 ！！！
+                # ！！！禁用 M3U8 代理调用 ！！！
                 # if '.m3u8' in url:
                 #     url = self.proxy(url, 'm3u8')
                     
@@ -161,13 +161,13 @@ class Spider(Spider):
             p, url = 1, f"{self.hsot}{id}"
         
         
-        # ！！！关键修复点：将 Header 切换为包含正确 Referer 的主站 Header ！！！
-        # self.headers 包含了正确的 Referer: self.hsot/
+        # ！！！关键修复点：设置正确的 Referer ！！！
+        # 1. 以 self.headers 为基础，确保 User-Agent 等是正确的。
         play_headers = self.headers.copy() 
+        # 2. 强制设置 Referer 为视频播放页面的 URL
+        play_headers['referer'] = play_page_url 
         
-        # 补充：如果播放地址仍需要 origin/特定header，可以尝试合并或替换
-        # 例如：play_headers.update(self.pheader) 
-
+        # 返回解析结果
         return {'parse': p, 'url': url, 'header': play_headers}
 
     def liveContent(self, url):
@@ -280,4 +280,13 @@ class Spider(Spider):
             return encoded_bytes.decode('utf-8')
         except Exception as e:
             print(f"Base64编码错误: {str(e)}")
-            return
+            return ""
+
+    def d64(self,encoded_text):
+        try:
+            encoded_bytes = encoded_text.encode('utf-8')
+            decoded_bytes = b64decode(encoded_bytes)
+            return decoded_bytes.decode('utf-8')
+        except Exception as e:
+            print(f"Base64解码错误: {str(e)}")
+            return ""
