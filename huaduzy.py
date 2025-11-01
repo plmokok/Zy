@@ -113,7 +113,7 @@ class Spider(Spider):
         data = self.getpq(self.session.get(f"{self.hsot}/vodsearch/{key}----------{pg}---.html"))
         return {'list': self.getlist(data('.stui-vodlist.clearfix li')), 'page': pg}
 
-    # 【主要修改点 1：playerContent】
+    # 【播放解析：保留 'allow_redirects=False' 绕过广告跳转】
     def playerContent(self, flag, id, vipFlags):
         try:
             # 访问播放页面
@@ -124,10 +124,9 @@ class Spider(Spider):
             temp_headers = self.session.headers.copy()
             temp_headers.update({'referer': play_url})
             
-            # 【关键：禁用自动跳转】 避免被服务器 3xx 重定向或客户端 JS 影响
+            # 禁用自动跳转，尝试获取包含 player_data 的原始 HTML
             response = self.session.get(play_url, headers=temp_headers, allow_redirects=False)
             
-            # 检查是否发生重定向 (如果发生，说明是服务器端重定向，且原始内容可能不完整)
             if response.status_code in (301, 302, 307, 308):
                 print(f"警告：检测到状态码 {response.status_code}，可能发生服务器端重定向。")
             
@@ -166,7 +165,7 @@ class Spider(Spider):
             final_url = self.double_url_decode(encrypted_url)
             print(f"解码后的播放地址: {final_url}")
             
-            # 【关键：CDN 替换】直接替换CDN域名为已验证可用的域名
+            # CDN替换（保持原版逻辑）
             final_url = self.replace_cdn_domain(final_url)
             print(f"CDN替换后的播放地址: {final_url}")
             
@@ -198,34 +197,24 @@ class Spider(Spider):
         
         return step2
 
-    # 【主要修改点 2：replace_cdn_domain】
+    # 【CDN替换：恢复到原始版本代码】
     def replace_cdn_domain(self, video_url):
         """直接替换CDN域名为已验证可用的域名"""
-        
-        # 【根据测试结果设置新的有效域名】
-        # 假设 cdn.hdys.xyz 是目前测试有效的域名
-        new_valid_domain = 'cdn.hdys.xyz' 
-
-        # 定义需要被替换的旧域名
+        # 定义CDN域名映射
         cdn_mappings = [
-            'cdn.hdys.top', 
-            'cdn1.hdys.xyz', 
-            'cdn2.hdys.xyz', 
-            'cdn3.hdys.xyz', 
-            'cdn4.hdys.xyz',
-            'cdn5.hdzy.xyz' # 这个是原代码中使用的失效替换目标，也应被替换
+            ('cdn.hdys.xyz', 'cdn5.hdzy.xyz'),
+            ('cdn.hdys.top', 'cdn5.hdzy.xyz'),
+            ('cdn1.hdys.xyz', 'cdn5.hdzy.xyz'),
+            ('cdn2.hdys.xyz', 'cdn5.hdzy.xyz'),
+            ('cdn3.hdys.xyz', 'cdn5.hdzy.xyz'),
+            ('cdn4.hdys.xyz', 'cdn5.hdzy.xyz'),
         ]
         
-        # 如果原始 URL 中包含了新的有效域名，则不进行替换
-        if new_valid_domain in video_url:
-             print(f"URL已包含有效域名 {new_valid_domain}，跳过替换。")
-             return video_url
-        
         # 直接替换域名
-        for old_domain in cdn_mappings:
+        for old_domain, new_domain in cdn_mappings:
             if old_domain in video_url:
-                new_url = video_url.replace(old_domain, new_valid_domain)
-                print(f"CDN域名替换: {old_domain} -> {new_valid_domain}")
+                new_url = video_url.replace(old_domain, new_domain)
+                print(f"CDN域名替换: {old_domain} -> {new_domain}")
                 return new_url
         
         # 如果没有匹配的域名，返回原始URL
