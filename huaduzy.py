@@ -113,13 +113,24 @@ class Spider(Spider):
         data = self.getpq(self.session.get(f"{self.hsot}/vodsearch/{key}----------{pg}---.html"))
         return {'list': self.getlist(data('.stui-vodlist.clearfix li')), 'page': pg}
 
+    # 【主要修改点 1：playerContent】
     def playerContent(self, flag, id, vipFlags):
         try:
             # 访问播放页面
             play_url = f"{self.hsot}{id}"
             print(f"正在访问播放页面: {play_url}")
             
-            response = self.session.get(play_url)
+            # 确保 Referer 正确设置
+            temp_headers = self.session.headers.copy()
+            temp_headers.update({'referer': play_url})
+            
+            # 【关键：禁用自动跳转】 避免被服务器 3xx 重定向或客户端 JS 影响
+            response = self.session.get(play_url, headers=temp_headers, allow_redirects=False)
+            
+            # 检查是否发生重定向 (如果发生，说明是服务器端重定向，且原始内容可能不完整)
+            if response.status_code in (301, 302, 307, 308):
+                print(f"警告：检测到状态码 {response.status_code}，可能发生服务器端重定向。")
+            
             data = self.getpq(response)
             
             # 查找包含player_data的脚本
@@ -133,7 +144,7 @@ class Spider(Spider):
                     break
             
             if not player_data_str:
-                raise Exception("未找到player_data脚本")
+                raise Exception("未找到player_data脚本，可能被广告或跳转影响。")
             
             print(f"找到player_data脚本")
             
@@ -147,7 +158,6 @@ class Spider(Spider):
             
             # 获取加密的URL
             encrypted_url = player_data.get('url', '')
-            encrypt_type = player_data.get('encrypt', 0)
             
             if not encrypted_url:
                 raise Exception("player_data中未找到url字段")
@@ -156,7 +166,7 @@ class Spider(Spider):
             final_url = self.double_url_decode(encrypted_url)
             print(f"解码后的播放地址: {final_url}")
             
-            # 直接替换CDN域名为已验证可用的域名
+            # 【关键：CDN 替换】直接替换CDN域名为已验证可用的域名
             final_url = self.replace_cdn_domain(final_url)
             print(f"CDN替换后的播放地址: {final_url}")
             
@@ -188,23 +198,34 @@ class Spider(Spider):
         
         return step2
 
+    # 【主要修改点 2：replace_cdn_domain】
     def replace_cdn_domain(self, video_url):
         """直接替换CDN域名为已验证可用的域名"""
-        # 定义CDN域名映射
+        
+        # 【根据测试结果设置新的有效域名】
+        # 假设 cdn.hdys.xyz 是目前测试有效的域名
+        new_valid_domain = 'cdn.hdys.xyz' 
+
+        # 定义需要被替换的旧域名
         cdn_mappings = [
-            ('cdn.hdys.xyz', 'cdn5.hdzy.xyz'),
-            ('cdn.hdys.top', 'cdn5.hdzy.xyz'),
-            ('cdn1.hdys.xyz', 'cdn5.hdzy.xyz'),
-            ('cdn2.hdys.xyz', 'cdn5.hdzy.xyz'),
-            ('cdn3.hdys.xyz', 'cdn5.hdzy.xyz'),
-            ('cdn4.hdys.xyz', 'cdn5.hdzy.xyz'),
+            'cdn.hdys.top', 
+            'cdn1.hdys.xyz', 
+            'cdn2.hdys.xyz', 
+            'cdn3.hdys.xyz', 
+            'cdn4.hdys.xyz',
+            'cdn5.hdzy.xyz' # 这个是原代码中使用的失效替换目标，也应被替换
         ]
         
+        # 如果原始 URL 中包含了新的有效域名，则不进行替换
+        if new_valid_domain in video_url:
+             print(f"URL已包含有效域名 {new_valid_domain}，跳过替换。")
+             return video_url
+        
         # 直接替换域名
-        for old_domain, new_domain in cdn_mappings:
+        for old_domain in cdn_mappings:
             if old_domain in video_url:
-                new_url = video_url.replace(old_domain, new_domain)
-                print(f"CDN域名替换: {old_domain} -> {new_domain}")
+                new_url = video_url.replace(old_domain, new_valid_domain)
+                print(f"CDN域名替换: {old_domain} -> {new_valid_domain}")
                 return new_url
         
         # 如果没有匹配的域名，返回原始URL
