@@ -1,5 +1,4 @@
-# -*- coding: utf-8 -*-
-# by @嗷呜
+# -*- coding: utf-8 -*- # by @嗷呜 
 import json
 import re
 import sys
@@ -10,17 +9,13 @@ from urllib.parse import urlparse, unquote
 import binascii
 import requests
 from pyquery import PyQuery as pq
+
 sys.path.append('..')
 from base.spider import Spider
 
-
 class Spider(Spider):
-
     def init(self, extend=""):
-        '''
-        如果一直访问不了，手动访问导航页:https://a.hdys.top，替换：
-        self.host = 'https://xxx.xxx.xxx'
-        '''
+        ''' 如果一直访问不了，手动访问导航页:https://a.hdys.top，替换： self.host = 'https://xxx.xxx.xxx' '''
         self.session = requests.Session()
         self.headers = {
             'User-Agent': 'Mozilla/5.0 (Linux; Android 10; K) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/130.0.0.0 Safari/537.36',
@@ -113,91 +108,121 @@ class Spider(Spider):
         data = self.getpq(self.session.get(f"{self.hsot}/vodsearch/{key}----------{pg}---.html"))
         return {'list': self.getlist(data('.stui-vodlist.clearfix li')), 'page': pg}
 
-    # 【播放解析：保留 'allow_redirects=False' 绕过广告跳转】
     def playerContent(self, flag, id, vipFlags):
-        try:
-            # 访问播放页面
-            play_url = f"{self.hsot}{id}"
-            print(f"正在访问播放页面: {play_url}")
-            
-            # 确保 Referer 正确设置
-            temp_headers = self.session.headers.copy()
-            temp_headers.update({'referer': play_url})
-            
-            # 禁用自动跳转，尝试获取包含 player_data 的原始 HTML
-            response = self.session.get(play_url, headers=temp_headers, allow_redirects=False)
-            
-            if response.status_code in (301, 302, 307, 308):
-                print(f"警告：检测到状态码 {response.status_code}，可能发生服务器端重定向。")
-            
-            data = self.getpq(response)
-            
-            # 查找包含player_data的脚本
-            scripts = data('script')
-            player_data_str = None
-            
-            for script in scripts.items():
-                script_text = script.text()
-                if script_text and 'player_data' in script_text:
-                    player_data_str = script_text
-                    break
-            
-            if not player_data_str:
-                raise Exception("未找到player_data脚本，可能被广告或跳转影响。")
-            
-            print(f"找到player_data脚本")
-            
-            # 提取player_data JSON
-            json_match = re.search(r'player_data\s*=\s*({.*?});', player_data_str, re.DOTALL)
-            if not json_match:
-                raise Exception("无法提取player_data JSON")
-            
-            player_data = json.loads(json_match.group(1))
-            print(f"解析到的player_data: {player_data}")
-            
-            # 获取加密的URL
-            encrypted_url = player_data.get('url', '')
-            
-            if not encrypted_url:
-                raise Exception("player_data中未找到url字段")
-            
-            # 使用双重URL解码
-            final_url = self.double_url_decode(encrypted_url)
-            print(f"解码后的播放地址: {final_url}")
-            
-            # CDN替换（保持原版逻辑）
-            final_url = self.replace_cdn_domain(final_url)
-            print(f"CDN替换后的播放地址: {final_url}")
-            
-            p = 0
-            if '.m3u8' in final_url:
-                final_url = self.proxy(final_url, 'm3u8')
+        max_retries = 5  # 增加到5次重试
+        retry_delays = [1, 2, 3, 5, 8]  # 递增的延迟时间（秒）
+        
+        for attempt in range(max_retries):
+            try:
+                # 访问播放页面
+                play_url = f"{self.hsot}{id}"
+                print(f"正在访问播放页面 (尝试 {attempt+1}/{max_retries}): {play_url}")
+                response = self.session.get(play_url)
                 
-            return {'parse': p, 'url': final_url, 'header': self.pheader}
+                # 查找包含player_data的脚本
+                data = self.getpq(response)
+                scripts = data('script')
+                player_data_str = None
+                for script in scripts.items():
+                    script_text = script.text()
+                    if script_text and 'player_data' in script_text:
+                        player_data_str = script_text
+                        break
                 
-        except Exception as e:
-            print(f"播放地址解析失败: {str(e)}")
-            import traceback
-            traceback.print_exc()
-            
-            # 备用方案：返回播放页面URL，让播放器自行解析
-            p, url = 1, f"{self.hsot}{id}"
-            print(f"使用备用方案，parse={p}, url={url}")
-            return {'parse': p, 'url': url, 'header': self.pheader}
+                if not player_data_str:
+                    if attempt < max_retries - 1:
+                        delay = retry_delays[attempt]
+                        print(f"未找到player_data脚本，{delay}秒后重试...")
+                        time.sleep(delay)
+                        continue
+                    else:
+                        raise Exception("未找到player_data脚本")
+                
+                print(f"找到player_data脚本")
+                
+                # 提取player_data JSON
+                json_match = re.search(r'player_data\s*=\s*({.*?});', player_data_str, re.DOTALL)
+                if not json_match:
+                    if attempt < max_retries - 1:
+                        delay = retry_delays[attempt]
+                        print(f"无法提取player_data JSON，{delay}秒后重试...")
+                        time.sleep(delay)
+                        continue
+                    else:
+                        raise Exception("无法提取player_data JSON")
+                
+                player_data = json.loads(json_match.group(1))
+                print(f"解析到的player_data: {player_data}")
+                
+                # 获取加密的URL
+                encrypted_url = player_data.get('url', '')
+                encrypt_type = player_data.get('encrypt', 0)
+                if not encrypted_url:
+                    if attempt < max_retries - 1:
+                        delay = retry_delays[attempt]
+                        print(f"player_data中未找到url字段，{delay}秒后重试...")
+                        time.sleep(delay)
+                        continue
+                    else:
+                        raise Exception("player_data中未找到url字段")
+                
+                # 使用双重URL解码
+                final_url = self.double_url_decode(encrypted_url)
+                print(f"解码后的播放地址: {final_url}")
+                
+                # 直接替换CDN域名为已验证可用的域名
+                final_url = self.replace_cdn_domain(final_url)
+                print(f"CDN替换后的播放地址: {final_url}")
+                
+                # 验证播放地址是否有效
+                if self.is_valid_play_url(final_url):
+                    p = 0
+                    if '.m3u8' in final_url:
+                        final_url = self.proxy(final_url, 'm3u8')
+                    return {'parse': p, 'url': final_url, 'header': self.pheader}
+                else:
+                    if attempt < max_retries - 1:
+                        delay = retry_delays[attempt]
+                        print(f"播放地址无效，{delay}秒后重试...")
+                        time.sleep(delay)
+                        continue
+                    else:
+                        raise Exception("播放地址无效")
+                        
+            except Exception as e:
+                print(f"播放地址解析失败 (尝试 {attempt+1}/{max_retries}): {str(e)}")
+                if attempt < max_retries - 1:
+                    delay = retry_delays[attempt]
+                    print(f"{delay}秒后重试...")
+                    time.sleep(delay)
+                else:
+                    import traceback
+                    traceback.print_exc()
+        
+        # 所有重试都失败后的备用方案
+        p, url = 1, f"{self.hsot}{id}"
+        print(f"所有重试失败，使用备用方案，parse={p}, url={url}")
+        return {'parse': p, 'url': url, 'header': self.pheader}
+    
+    def is_valid_play_url(self, url):
+        """检查播放地址是否有效"""
+        if not url or not isinstance(url, str):
+            return False
+        
+        # 检查是否包含常见的视频格式或协议
+        video_indicators = ['.m3u8', '.mp4', 'http', '://', 'video', 'stream']
+        return any(indicator in url.lower() for indicator in video_indicators)
 
     def double_url_decode(self, encrypted_url):
         """双重URL解码"""
         # 第一步URL解码
         step1 = unquote(encrypted_url)
         print(f"第一步URL解码: {step1}")
-        
         # 第二步URL解码
         step2 = unquote(step1)
         print(f"第二步URL解码: {step2}")
-        
         return step2
 
-    # 【CDN替换：恢复到原始版本代码】
     def replace_cdn_domain(self, video_url):
         """直接替换CDN域名为已验证可用的域名"""
         # 定义CDN域名映射
@@ -263,13 +288,10 @@ class Spider(Spider):
             urls = [u.strip() for u in url_list.split(',')]
         else:
             urls = url_list
-
         if len(urls) <= 1:
             return urls[0] if urls else ''
-
         results = {}
         threads = []
-
         def test_host(url):
             try:
                 url = re.findall(r'"([^"]*)"', url)[0]
@@ -280,15 +302,12 @@ class Spider(Spider):
                 results[url] = delay
             except Exception as e:
                 results[url] = float('inf')
-
         for url in urls:
             t = threading.Thread(target=test_host, args=(url,))
             threads.append(t)
             t.start()
-
         for t in threads:
             t.join()
-
         return min(results.items(), key=lambda x: x[1])[0]
 
     def m3Proxy(self, url):
